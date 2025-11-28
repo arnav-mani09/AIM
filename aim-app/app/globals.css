@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  font-family: var(--font-space);
+  min-height: 100vh;
+}
+
+.section-card {
+  @apply bg-card rounded-3xl border border-stroke p-8 shadow-soft;
+}
+
+.pill {
+  @apply inline-flex items-center rounded-full bg-[#ecf2fb] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-subtext;
+}
+
+.label-text {
+  @apply text-[0.7rem] uppercase tracking-[0.14em] text-subtext;
+}
+
+.features {
+  @apply grid gap-8 rounded-3xl border border-stroke bg-card p-8 shadow-soft md:grid-cols-2;
+}
+
+.summary-list {
+  @apply flex flex-col gap-2 text-sm text-subtext;
+}
+
+.feature-cta {
+  @apply flex flex-wrap gap-4;
+}
+
+.feature-scroll {
+  @apply rounded-3xl border border-stroke bg-white p-6 shadow-soft;
+  max-height: 460px;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+}
+
+.feature-panel {
+  @apply rounded-2xl border border-stroke bg-white p-5 shadow-soft;
+  scroll-snap-align: start;
+}
+
+.feature-scroll:focus-visible {
+  outline: 2px solid #1a4d84;
+  outline-offset: 4px;
+}

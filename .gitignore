@@ -1,0 +1,15 @@
+# Node/Turbo artifacts
+node_modules/
+.next/
+
+# App specific outputs
+*.log
+.DS_Store
+
+# Aim app directories
+aim-app/node_modules/
+aim-app/.next/
+aim-app/.turbo/
+
+# Env files
+.env*
