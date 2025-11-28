@@ -4,11 +4,12 @@ import { ExampleSection } from "@/components/ExampleSection";
 import { FeaturesSection } from "@/components/FeaturesSection";
 import { HeroSection } from "@/components/HeroSection";
 import { getPlatformData } from "@/lib/platformData";
+import { getGameStats } from "@/lib/statsData";
 
 export default async function Home() {
-  const { heroMetrics, overviewItems, exampleCards, featureSummary, featurePanels } = await getPlatformData(
-    process.env.NEXT_PUBLIC_BASE_URL
-  );
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
+  const [platformData, stats] = await Promise.all([getPlatformData(baseUrl), getGameStats(baseUrl)]);
+  const { heroMetrics, overviewItems, exampleCards, featureSummary, featurePanels } = platformData;
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -33,7 +34,7 @@ export default async function Home() {
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-10 px-6 py-10">
         <HeroSection metrics={heroMetrics} overview={overviewItems} />
-        <ExampleSection cards={exampleCards} />
+        <ExampleSection cards={exampleCards} stats={stats} />
         <FeaturesSection summary={featureSummary} panels={featurePanels} />
 
         <section id="about" className="section-card">
