@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 
 import { ExampleSection } from "@/components/ExampleSection";
 import { FeaturesSection } from "@/components/FeaturesSection";
@@ -8,8 +9,8 @@ import { getGameStats } from "@/lib/statsData";
 
 export default async function Home() {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
-  const [platformData, stats] = await Promise.all([getPlatformData(baseUrl), getGameStats(baseUrl)]);
-  const { heroMetrics, overviewItems, exampleCards, featureSummary, featurePanels } = platformData;
+  const [platformData, stats] = await Promise.all([getPlatformData(), getGameStats(baseUrl)]);
+  const { heroMetrics, overviewItems, featureSummary, featurePanels } = platformData;
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -28,13 +29,23 @@ export default async function Home() {
             <a href="#features" className="hover:text-[#0e1a2e]">Features</a>
             <a href="#about" className="hover:text-[#0e1a2e]">About</a>
           </nav>
-          <button className="rounded-full bg-accent px-5 py-2 text-sm font-semibold text-white shadow-soft">Request Demo</button>
+          <div className="flex items-center gap-3">
+            <Link href="/auth/login" className="text-sm font-semibold text-subtext hover:text-[#0e1a2e]">
+              Sign in
+            </Link>
+            <Link
+              href="/auth/register"
+              className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-white shadow-soft"
+            >
+              Sign up
+            </Link>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-10 px-6 py-10">
         <HeroSection metrics={heroMetrics} overview={overviewItems} />
-        <ExampleSection cards={exampleCards} stats={stats} />
+        <ExampleSection stats={stats} />
         <FeaturesSection summary={featureSummary} panels={featurePanels} />
 
         <section id="about" className="section-card">

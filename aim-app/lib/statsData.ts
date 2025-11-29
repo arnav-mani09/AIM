@@ -1,3 +1,5 @@
+import statsDataset from "@/data/gameStats.json";
+
 export type PossessionSplit = {
   team: string;
   percentage: number;
@@ -20,30 +22,26 @@ export type GameStats = {
   };
 };
 
-const mockStats: GameStats = {
-  matchup: "Valley vs Central",
-  possession: [
-    { team: "Valley", percentage: 64 },
-    { team: "Central", percentage: 36 },
-  ],
-  insights: [
-    { player: "#24 Lane", label: "Shooter spotlight", detail: "64% eFG last five games" },
-    { player: "#12 Brooks", label: "Handle watch", detail: "18% TO vs press" },
-    { player: "ATO slip finish", label: "Clip callout", detail: "Shared with staff in 30s" },
-  ],
-  summary: {
-    offensiveRating: 109.4,
-    effectiveFG: 58.7,
-    turnoverRate: 11.2,
-  },
-};
+type StatsRecord = GameStats & { id: string };
 
-export async function getMockStats(): Promise<GameStats> {
-  return structuredClone(mockStats);
+const records: StatsRecord[] = statsDataset as StatsRecord[];
+
+export function findStats(matchup?: string): GameStats {
+  const normalized = matchup?.toLowerCase();
+  const match = records.find((record) => record.matchup.toLowerCase() === normalized) ?? records[0];
+  return structuredClone(match);
 }
 
-export async function getGameStats(baseUrl?: string): Promise<GameStats> {
-  const target = new URL("/api/stats", baseUrl ?? process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000");
+export async function getMockStats(matchup?: string): Promise<GameStats> {
+  return findStats(matchup);
+}
+
+export async function getGameStats(baseUrl?: string, matchup?: string): Promise<GameStats> {
+  const origin = baseUrl ?? process.env.NEXT_PUBLIC_BASE_URL ?? "http://127.0.0.1:8000";
+  const target = new URL("/api/v1/stats/game", origin);
+  if (matchup) {
+    target.searchParams.set("matchup", matchup);
+  }
   const response = await fetch(target);
   if (!response.ok) {
     throw new Error("Failed to fetch stats");

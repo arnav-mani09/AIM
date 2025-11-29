@@ -1,0 +1,37 @@
+[
+  {
+    "id": "valley-central-2024-11-26",
+    "matchup": "Valley vs Central",
+    "possession": [
+      { "team": "Valley", "percentage": 64 },
+      { "team": "Central", "percentage": 36 }
+    ],
+    "insights": [
+      { "player": "#24 Lane", "label": "Shooter spotlight", "detail": "64% eFG last five games" },
+      { "player": "#12 Brooks", "label": "Handle watch", "detail": "18% turnover rate vs press" },
+      { "player": "ATO slip finish", "label": "Clip callout", "detail": "Shared to staff/athlete in 30s" }
+    ],
+    "summary": {
+      "offensiveRating": 109.4,
+      "effectiveFG": 58.7,
+      "turnoverRate": 11.2
+    }
+  },
+  {
+    "id": "northside-westfield-2024-11-18",
+    "matchup": "Northside vs Westfield",
+    "possession": [
+      { "team": "Northside", "percentage": 48 },
+      { "team": "Westfield", "percentage": 52 }
+    ],
+    "insights": [
+      { "player": "#3 Carter", "label": "Pace setter", "detail": "10 assists in 28 possessions" },
+      { "player": "#21 Hayes", "label": "Paint watch", "detail": "6 blocks but 4 fouls" }
+    ],
+    "summary": {
+      "offensiveRating": 101.2,
+      "effectiveFG": 51.5,
+      "turnoverRate": 14.3
+    }
+  }
+]

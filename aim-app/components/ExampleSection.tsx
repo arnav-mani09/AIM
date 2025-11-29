@@ -1,14 +1,13 @@
-import type { ExampleCard } from "@/lib/mockData";
 import type { GameStats } from "@/lib/statsData";
 
 interface ExampleSectionProps {
-  cards: ExampleCard[];
   stats: GameStats;
 }
 
-export function ExampleSection({ cards, stats }: ExampleSectionProps) {
+export function ExampleSection({ stats }: ExampleSectionProps) {
   const possession = stats.possession;
   const summary = stats.summary;
+  const insights = stats.insights;
   return (
     <section id="example" className="section-card">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -52,11 +51,11 @@ export function ExampleSection({ cards, stats }: ExampleSectionProps) {
         </article>
       </div>
       <div className="mt-6 grid gap-4 md:grid-cols-2">
-        {cards.map((card) => (
-          <article key={card.label} className="rounded-2xl border border-stroke bg-white p-5 shadow-soft">
-            <p className="label-text">{card.label}</p>
-            <h3 className="mt-3 text-xl font-semibold text-[#0e1a2e]">{card.title}</h3>
-            <p className="mt-2 text-sm text-subtext">{card.copy}</p>
+        {insights.map((insight) => (
+          <article key={insight.label} className="rounded-2xl border border-stroke bg-white p-5 shadow-soft">
+            <p className="label-text">{insight.label}</p>
+            <h3 className="mt-3 text-xl font-semibold text-[#0e1a2e]">{insight.player}</h3>
+            <p className="mt-2 text-sm text-subtext">{insight.detail}</p>
           </article>
         ))}
       </div>

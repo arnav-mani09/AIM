@@ -27,8 +27,9 @@ export async function getMockPlatformData(): Promise<PlatformData> {
   };
 }
 
-export async function getPlatformData(baseUrl?: string): Promise<PlatformData> {
-  const target = new URL("/api/data", baseUrl ?? process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000");
+export async function getPlatformData(): Promise<PlatformData> {
+  const origin = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  const target = new URL("/api/data", origin);
   const res = await fetch(target);
   if (!res.ok) {
     throw new Error("Failed to load platform data");
