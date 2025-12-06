@@ -13,6 +13,11 @@ class Settings(BaseSettings):
 
     model_gateway_url: str | None = None
     model_gateway_token: str | None = None
+    frontend_base_url: str = "http://localhost:3000"
+    email_from_address: str | None = None
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_region: str | None = None
 
     class Config:
         env_file = ".env"

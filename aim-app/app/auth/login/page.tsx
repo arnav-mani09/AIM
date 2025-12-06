@@ -2,6 +2,8 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
+import Link from "next/link";
 
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "http://127.0.0.1:8000";
 
@@ -39,7 +41,14 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center gap-6 px-6 py-12">
+    <main className="mx-auto min-h-screen w-full max-w-md px-6 py-12">
+      <Link href="/" className="mb-8 flex items-center gap-2">
+        <Image src="/aim-logo.png" alt="AIM logo" width={48} height={48} className="h-12 w-12" />
+        <div>
+          <p className="text-xs uppercase tracking-[0.5em] text-subtext">AIM</p>
+          <p className="text-sm text-subtext">Analyze • Improve • Master</p>
+        </div>
+      </Link>
       <div className="section-card">
         <h1 className="text-2xl font-semibold text-[#0e1a2e]">Sign in to AIM</h1>
         <p className="mt-2 text-sm text-subtext">Access film uploads, chat, and your team workspaces.</p>

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.db.base_class import Base
@@ -12,5 +12,8 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     is_superuser = Column(Boolean, default=False)
     team_id = Column(Integer, ForeignKey("team.id"), nullable=True)
+    is_verified = Column(Boolean, default=False, nullable=False)
+    verification_token = Column(String, nullable=True, index=True)
+    verification_sent_at = Column(DateTime, nullable=True)
 
     team = relationship("Team")
