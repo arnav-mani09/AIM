@@ -5,3 +5,7 @@ from .game import Game
 from .player import Player
 from .possession import Possession
 from .clip import Clip
+from .team_membership import TeamMembership
+from .team_invite import TeamInvite
+from .game_upload import GameUpload
+from .film_segment import FilmSegment

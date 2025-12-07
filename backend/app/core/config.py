@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
     aws_region: str | None = None
+    media_root: str = "storage/uploads"
 
     class Config:
         env_file = ".env"

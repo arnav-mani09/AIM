@@ -31,6 +31,11 @@ export default function LoginPage() {
         const data = await response.json();
         throw new Error(data.detail ?? "Invalid credentials");
       }
+      const data = await response.json();
+      if (!data?.access_token) {
+        throw new Error("Login did not return an access token");
+      }
+      window.localStorage.setItem("aim_access_token", data.access_token);
       setStatus("success");
       setMessage("Signed in successfully. Redirecting to dashboard...");
       setTimeout(() => router.push("/dashboard"), 1200);
