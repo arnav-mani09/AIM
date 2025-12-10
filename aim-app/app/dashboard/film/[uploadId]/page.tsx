@@ -37,6 +37,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
   const [formStatus, setFormStatus] = useState<"idle" | "loading" | "error" | "success">("idle");
   const [formMessage, setFormMessage] = useState("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [previewBounds, setPreviewBounds] = useState<{ start: number; end: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -70,6 +71,24 @@ export default function FilmEditorPage({ params }: { params: Params }) {
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load film"))
       .finally(() => setLoading(false));
   }, [token, teamId, uploadId]);
+
+  useEffect(() => {
+    if (!token || !teamId || segments.length > 0) {
+      return;
+    }
+    const interval = setInterval(() => {
+      fetchFilmSegments(token, Number(teamId), uploadId)
+        .then((segmentData) => {
+          if (segmentData.length > 0) {
+            setSegments(segmentData);
+          }
+        })
+        .catch(() => {
+          /* silent retry */
+        });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [token, teamId, uploadId, segments.length]);
 
   useEffect(() => {
     if (!token || !teamId) {
@@ -135,6 +154,25 @@ export default function FilmEditorPage({ params }: { params: Params }) {
     return `${mins}:${secs}`;
   };
 
+  const handlePreviewSegment = (segment: FilmSegment) => {
+    const video = videoRef.current;
+    if (!video) return;
+    const start = segment.start_second;
+    const end = segment.end_second;
+    setPreviewBounds({ start, end });
+    video.currentTime = start;
+    video.play().catch(() => {
+      /* ignore autoplay block */
+    });
+  };
+
+  const applySegmentToForm = (segment: FilmSegment) => {
+    handleStartChange(segment.start_second);
+    handleEndChange(segment.end_second);
+    setLabel(segment.label ?? "");
+    setNotes(segment.notes ?? "");
+  };
+
   const handleCreateSegment = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!token || !teamId) return;
@@ -167,6 +205,21 @@ export default function FilmEditorPage({ params }: { params: Params }) {
       setError(err instanceof Error ? err.message : "Failed to publish clip");
     }
   };
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const handleTimeUpdate = () => {
+      if (previewBounds && video.currentTime >= previewBounds.end) {
+        video.pause();
+        setPreviewBounds(null);
+      }
+    };
+    video.addEventListener("timeupdate", handleTimeUpdate);
+    return () => {
+      video.removeEventListener("timeupdate", handleTimeUpdate);
+    };
+  }, [previewBounds]);
 
   if (!teamId) {
     return null;
@@ -206,6 +259,52 @@ export default function FilmEditorPage({ params }: { params: Params }) {
               </div>
             ) : (
               <p className="mt-6 text-sm text-red-500">Video preview failed to load.</p>
+            )}
+          </section>
+
+          <section className="section-card">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-[#0e1a2e]">Suggested segments</h2>
+              <p className="text-xs uppercase tracking-[0.3em] text-subtext">Auto-generated</p>
+            </div>
+            {segments.length === 0 ? (
+              <p className="mt-3 text-sm text-subtext">We&apos;ll suggest cuts as soon as processing finishes.</p>
+            ) : (
+              <ul className="mt-4 space-y-3 text-sm">
+                {segments.map((segment) => (
+                  <li key={segment.id} className="rounded-2xl border border-stroke p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-[#0e1a2e]">
+                          {segment.label ?? "Suggested segment"} ({formatTimestamp(segment.start_second)}–
+                          {formatTimestamp(segment.end_second)})
+                        </p>
+                        {segment.notes && <p className="text-subtext">{segment.notes}</p>}
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        <button
+                          onClick={() => handlePreviewSegment(segment)}
+                          className="rounded-full border border-stroke px-3 py-1 font-semibold text-[#0e1a2e]"
+                        >
+                          Preview
+                        </button>
+                        <button
+                          onClick={() => applySegmentToForm(segment)}
+                          className="rounded-full border border-stroke px-3 py-1 font-semibold text-[#0e1a2e]"
+                        >
+                          Load into form
+                        </button>
+                        <button
+                          onClick={() => handlePublish(segment.id)}
+                          className="rounded-full bg-accent px-3 py-1 font-semibold text-white"
+                        >
+                          Publish clip
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
             )}
           </section>
 
@@ -302,35 +401,23 @@ export default function FilmEditorPage({ params }: { params: Params }) {
             </div>
           </section>
 
-          <section className="section-card">
-            <h2 className="text-xl font-semibold text-[#0e1a2e]">Segments</h2>
-            {segments.length === 0 ? (
-              <p className="mt-2 text-sm text-subtext">No segments yet.</p>
-            ) : (
-              <ul className="mt-4 space-y-3 text-sm">
-                {segments.map((segment) => (
-                  <li key={segment.id} className="rounded-2xl border border-stroke p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-semibold text-[#0e1a2e]">
-                          {segment.label ?? "Untitled"} ({segment.start_second}s–{segment.end_second}s)
-                        </p>
-                        {segment.notes && <p className="text-subtext">{segment.notes}</p>}
-                      </div>
-                      <button
-                        onClick={() => handlePublish(segment.id)}
-                        className="rounded-full border border-stroke px-3 py-1 text-xs font-semibold text-[#0e1a2e]"
-                      >
-                        Publish clip
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
         </>
       ) : null}
     </main>
   );
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const handleTimeUpdate = () => {
+      if (previewBounds && video.currentTime >= previewBounds.end) {
+        video.pause();
+        setPreviewBounds(null);
+      }
+    };
+    video.addEventListener("timeupdate", handleTimeUpdate);
+    return () => {
+      video.removeEventListener("timeupdate", handleTimeUpdate);
+    };
+  }, [previewBounds]);
 }

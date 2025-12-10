@@ -4,12 +4,13 @@ import mimetypes
 import os
 import shutil
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api import deps
 from app.core.config import get_settings
+from app.db.session import SessionLocal
 from app.models.game_upload import GameUpload
 from app.models.team_membership import TeamMembership
 from app.models.film_segment import FilmSegment
@@ -17,6 +18,7 @@ from app.models.clip import Clip
 from app.schemas.game_upload import GameUploadRead
 from app.schemas.film_segment import FilmSegmentRead, FilmSegmentCreate
 from app.schemas.clip import ClipRead
+from app.services.film_processing import FilmProcessingService
 
 settings = get_settings()
 router = APIRouter(prefix="/teams/{team_id}/film", tags=["film"])
@@ -53,6 +55,14 @@ def _save_raw_file(upload: UploadFile) -> str:
     return str(dest)
 
 
+def _process_upload_async(upload_id: int) -> None:
+    db = SessionLocal()
+    try:
+        FilmProcessingService(db).process_upload(upload_id)
+    finally:
+        db.close()
+
+
 @router.get("", response_model=list[GameUploadRead])
 def list_game_uploads(
     team_id: int,
@@ -84,6 +94,7 @@ def get_game_upload(
 @router.post("", response_model=GameUploadRead, status_code=status.HTTP_201_CREATED)
 async def upload_game_film(
     team_id: int,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     title: str = Form(...),
     notes: str | None = Form(None),
@@ -103,6 +114,8 @@ async def upload_game_film(
     db.add(upload)
     db.commit()
     db.refresh(upload)
+    if background_tasks is not None:
+        background_tasks.add_task(_process_upload_async, upload.id)
     return upload
 
 
