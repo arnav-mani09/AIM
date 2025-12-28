@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.models.clip import Clip
 from app.models.team_membership import TeamMembership
 from app.schemas.clip import ClipRead
+from app.services.clip_stats import hydrate_clip_stats
 
 router = APIRouter(prefix="/teams/{team_id}/clips", tags=["clips"])
 settings = get_settings()
@@ -63,6 +64,8 @@ def list_team_clips(
         .order_by(Clip.uploaded_at.desc())
         .all()
     )
+    for clip in clips:
+        hydrate_clip_stats(db, clip)
     return clips
 
 
@@ -75,6 +78,7 @@ def get_clip(
 ):
     _require_membership(db, team_id, current_user.id)
     clip = _get_clip(db, team_id, clip_id)
+    hydrate_clip_stats(db, clip)
     return clip
 
 
@@ -102,6 +106,7 @@ async def upload_team_clip(
     db.add(clip)
     db.commit()
     db.refresh(clip)
+    hydrate_clip_stats(db, clip)
     return clip
 
 

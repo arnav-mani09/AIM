@@ -24,3 +24,16 @@ class Clip(Base):
     team = relationship("Team", back_populates="clips")
     uploaded_by = relationship("User")
     source_upload = relationship("GameUpload", foreign_keys=[source_upload_id])
+    possessions = relationship(
+        "ClipPossessionLink",
+        cascade="all, delete-orphan",
+        backref="clip",
+    )
+
+    @property
+    def game_matchup(self) -> str | None:
+        return self.game.matchup if self.game else None
+
+    @property
+    def game_scheduled_at(self):
+        return self.game.scheduled_at if self.game else None

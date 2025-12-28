@@ -13,6 +13,7 @@ import {
   GameUploadRecord,
   publishFilmSegment,
 } from "@/lib/teamApi";
+import { formatLocalDateTime } from "@/lib/dateTime";
 
 type Params = {
   uploadId: string;
@@ -39,6 +40,10 @@ export default function FilmEditorPage({ params }: { params: Params }) {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [previewBounds, setPreviewBounds] = useState<{ start: number; end: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const statusLabel = upload?.status ?? "processing";
+  const isReady = statusLabel === "ready";
+  const isError = statusLabel === "error";
+  const isProcessing = !isReady && !isError;
 
   useEffect(() => {
     if (!teamId) {
@@ -59,28 +64,31 @@ export default function FilmEditorPage({ params }: { params: Params }) {
       return;
     }
     setLoading(true);
-    Promise.all([
-      fetchGameUpload(token, Number(teamId), uploadId),
-      fetchFilmSegments(token, Number(teamId), uploadId),
-    ])
-      .then(([uploadData, segmentsData]) => {
+    fetchGameUpload(token, Number(teamId), uploadId)
+      .then(async (uploadData) => {
         setUpload(uploadData);
-        setSegments(segmentsData);
         setError(null);
+        if (uploadData.status === "ready") {
+          const segmentsData = await fetchFilmSegments(token, Number(teamId), uploadId);
+          setSegments(segmentsData);
+        } else {
+          setSegments([]);
+        }
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load film"))
       .finally(() => setLoading(false));
   }, [token, teamId, uploadId]);
 
   useEffect(() => {
-    if (!token || !teamId || segments.length > 0) {
-      return;
-    }
+    if (!token || !teamId || !upload) return;
+    if (upload.status === "ready") return;
     const interval = setInterval(() => {
-      fetchFilmSegments(token, Number(teamId), uploadId)
-        .then((segmentData) => {
-          if (segmentData.length > 0) {
-            setSegments(segmentData);
+      fetchGameUpload(token, Number(teamId), uploadId)
+        .then(async (data) => {
+          setUpload(data);
+          if (data.status === "ready") {
+            const segmentsData = await fetchFilmSegments(token, Number(teamId), uploadId);
+            setSegments(segmentsData);
           }
         })
         .catch(() => {
@@ -88,7 +96,17 @@ export default function FilmEditorPage({ params }: { params: Params }) {
         });
     }, 5000);
     return () => clearInterval(interval);
-  }, [token, teamId, uploadId, segments.length]);
+  }, [token, teamId, upload, uploadId]);
+
+  useEffect(() => {
+    if (!token || !teamId) return;
+    if (upload?.status !== "ready") return;
+    fetchFilmSegments(token, Number(teamId), uploadId)
+      .then((segmentData) => setSegments(segmentData))
+      .catch(() => {
+        /* ignore */
+      });
+  }, [token, teamId, upload?.status, uploadId]);
 
   useEffect(() => {
     if (!token || !teamId) {
@@ -239,10 +257,17 @@ export default function FilmEditorPage({ params }: { params: Params }) {
           <section className="section-card">
             <h1 className="text-3xl font-semibold text-[#0e1a2e]">{upload.title}</h1>
             <p className="mt-1 text-sm text-subtext">
-              Uploaded {new Date(upload.uploaded_at).toLocaleString()}
+              Uploaded {formatLocalDateTime(upload.uploaded_at)}
               {durationMinutes && ` • ${durationMinutes} min`}
             </p>
             {upload.notes && <p className="mt-2 text-subtext">{upload.notes}</p>}
+            <span
+              className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                isReady ? "bg-green-100 text-green-700" : isError ? "bg-red-100 text-red-600" : "bg-yellow-100 text-yellow-700"
+              }`}
+            >
+              {isReady ? "Processing complete" : isError ? "Processing failed" : "Processing film…"}
+            </span>
             <p className="mt-4 text-sm text-subtext">
               Once AIM finishes processing, suggested segments will show below. You can also create manual
               segments now by entering start/end points (in seconds).
@@ -311,6 +336,11 @@ export default function FilmEditorPage({ params }: { params: Params }) {
           <section className="section-card grid gap-6 md:grid-cols-2">
             <form onSubmit={handleCreateSegment} className="flex flex-col gap-3 rounded-2xl border border-stroke p-4 text-sm">
               <p className="text-xs uppercase tracking-[0.3em] text-subtext">Add segment</p>
+              {!isReady && (
+                <p className="text-xs text-subtext">
+                  Segments will be editable after film processing finishes.
+                </p>
+              )}
               <div className="flex flex-col gap-2">
                 <label className="text-xs uppercase tracking-[0.3em] text-subtext">Start</label>
                 <input
@@ -319,6 +349,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
                   max={Math.max(duration, endValue)}
                   value={startValue}
                   onChange={(event) => handleStartChange(Number(event.target.value))}
+                  disabled={!isReady}
                 />
                 <div className="flex items-center justify-between text-xs text-subtext">
                   <span>{formatTimestamp(startValue)}</span>
@@ -339,6 +370,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
                   max={Math.max(duration, endValue)}
                   value={endValue}
                   onChange={(event) => handleEndChange(Number(event.target.value))}
+                  disabled={!isReady}
                 />
                 <div className="flex items-center justify-between text-xs text-subtext">
                   <span>{formatTimestamp(endValue)}</span>
@@ -359,6 +391,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
                   onChange={(event) => setLabel(event.target.value)}
                   className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
                   placeholder="e.g., Lane crunch-time floater"
+                  disabled={!isReady}
                 />
               </label>
               <label className="flex flex-col gap-1">
@@ -368,12 +401,13 @@ export default function FilmEditorPage({ params }: { params: Params }) {
                   value={notes}
                   onChange={(event) => setNotes(event.target.value)}
                   className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  disabled={!isReady}
                 />
               </label>
               <button
                 type="submit"
                 className="rounded-2xl bg-accent px-4 py-2 font-semibold text-white disabled:opacity-60"
-                disabled={formStatus === "loading"}
+                disabled={formStatus === "loading" || !isReady}
               >
                 {formStatus === "loading" ? "Saving…" : "Save segment"}
               </button>

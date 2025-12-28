@@ -12,6 +12,7 @@ from app.api import deps
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.game_upload import GameUpload
+from app.models.game import Game
 from app.models.team_membership import TeamMembership
 from app.models.film_segment import FilmSegment
 from app.models.clip import Clip
@@ -19,6 +20,8 @@ from app.schemas.game_upload import GameUploadRead
 from app.schemas.film_segment import FilmSegmentRead, FilmSegmentCreate
 from app.schemas.clip import ClipRead
 from app.services.film_processing import FilmProcessingService
+from app.services.clip_stats import link_clip_to_possessions, hydrate_clip_stats
+from app.services.game_matching import find_game_for_upload
 
 settings = get_settings()
 router = APIRouter(prefix="/teams/{team_id}/film", tags=["film"])
@@ -46,6 +49,13 @@ def _get_upload(db: Session, team_id: int, upload_id: int) -> GameUpload:
     if not upload:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found")
     return upload
+
+
+def _get_game(db: Session, game_id: int) -> Game:
+    game = db.query(Game).filter(Game.id == game_id).first()
+    if not game:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found")
+    return game
 
 
 def _save_raw_file(upload: UploadFile) -> str:
@@ -98,10 +108,16 @@ async def upload_game_film(
     file: UploadFile = File(...),
     title: str = Form(...),
     notes: str | None = Form(None),
+    game_id: int | None = Form(None),
     db: Session = Depends(deps.get_db_session),
     current_user=Depends(deps.get_current_user),
 ):
     _require_member(db, team_id, current_user.id)
+    game = None
+    if game_id is not None:
+        game = _get_game(db, game_id)
+    else:
+        game = find_game_for_upload(db, title, notes)
     storage_url = _save_raw_file(file)
     upload = GameUpload(
         team_id=team_id,
@@ -109,7 +125,8 @@ async def upload_game_film(
         title=title,
         notes=notes,
         storage_url=storage_url,
-        status="uploaded",
+        status="processing",
+        game_id=game.id if game else None,
     )
     db.add(upload)
     db.commit()
@@ -238,8 +255,11 @@ def publish_segment_as_clip(
         source_upload_id=upload.id,
         source_start_second=segment.start_second,
         source_end_second=segment.end_second,
+        game_id=upload.game_id,
     )
     db.add(clip)
     db.commit()
     db.refresh(clip)
+    link_clip_to_possessions(db, clip)
+    hydrate_clip_stats(db, clip)
     return clip

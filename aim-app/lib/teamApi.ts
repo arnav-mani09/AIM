@@ -24,6 +24,26 @@ export type TeamInvite = {
 
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "http://127.0.0.1:8000";
 
+export type ClipPlayerTouch = {
+  player: string;
+  touches: number;
+};
+
+export type ClipStatSummary = {
+  total_possessions: number;
+  players: ClipPlayerTouch[];
+};
+
+export type ClipPossessionContext = {
+  possession_id: number;
+  label: string;
+  outcome?: string | null;
+  player?: string | null;
+  team?: string | null;
+  start_second?: number | null;
+  end_second?: number | null;
+};
+
 export type ClipRecord = {
   id: number;
   title: string;
@@ -37,6 +57,10 @@ export type ClipRecord = {
   source_upload_id?: number | null;
   source_start_second?: number | null;
   source_end_second?: number | null;
+  game_matchup?: string | null;
+  game_scheduled_at?: string | null;
+  stats_summary?: ClipStatSummary | null;
+  possession_context?: ClipPossessionContext[];
 };
 
 export type GameUploadRecord = {
@@ -47,6 +71,9 @@ export type GameUploadRecord = {
   storage_url: string;
   uploaded_at: string;
   duration_seconds?: number | null;
+  game_id?: number | null;
+  game_matchup?: string | null;
+  game_scheduled_at?: string | null;
 };
 
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {

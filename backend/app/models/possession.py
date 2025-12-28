@@ -10,6 +10,8 @@ class Possession(Base):
     player_id = Column(Integer, ForeignKey("player.id"), nullable=True)
     label = Column(String, nullable=False)
     outcome = Column(String, nullable=True)
+    video_start_second = Column(Integer, nullable=True)
+    video_end_second = Column(Integer, nullable=True)
 
     game = relationship("Game", back_populates="possessions")
     player = relationship("Player", back_populates="possessions")

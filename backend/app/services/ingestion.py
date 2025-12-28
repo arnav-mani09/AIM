@@ -9,6 +9,7 @@ from app.models.game import Game
 from app.models.player import Player
 from app.models.possession import Possession
 from app.models.team import Team
+from app.services.game_matching import link_uploads_to_game
 
 
 class StatsIngestionService:
@@ -24,15 +25,20 @@ class StatsIngestionService:
             reader = csv.DictReader(csvfile)
             for row in reader:
                 player = self._get_or_create_player(row["player"], row["jersey"], row.get("team"))
+                start_second = self._parse_int(row.get("start_second"))
+                end_second = self._parse_int(row.get("end_second"))
                 possession = Possession(
                     game_id=game.id,
                     player_id=player.id,
                     label=row["label"],
                     outcome=row.get("outcome"),
+                    video_start_second=start_second,
+                    video_end_second=end_second,
                 )
                 self.db.add(possession)
         self.db.commit()
         self.db.refresh(game)
+        link_uploads_to_game(self.db, game)
         return game
 
     def _get_or_create_team(self, team_name: str) -> Team:
@@ -60,3 +66,12 @@ class StatsIngestionService:
         self.db.add(player)
         self.db.flush()
         return player
+
+    @staticmethod
+    def _parse_int(value: str | None) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            return int(float(value))
+        except ValueError:
+            return None

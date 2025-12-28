@@ -11,6 +11,7 @@ class GameUpload(Base):
     id = Column(Integer, primary_key=True, index=True)
     team_id = Column(Integer, ForeignKey("team.id"), nullable=False)
     uploaded_by_id = Column(Integer, ForeignKey("user.id"), nullable=True)
+    game_id = Column(Integer, ForeignKey("game.id"), nullable=True)
     title = Column(String, nullable=False)
     storage_url = Column(String, nullable=False)
     duration_seconds = Column(Integer, nullable=True)
@@ -20,4 +21,13 @@ class GameUpload(Base):
 
     team = relationship("Team", back_populates="game_uploads")
     uploaded_by = relationship("User")
+    game = relationship("Game", back_populates="uploads")
     segments = relationship("FilmSegment", back_populates="upload", cascade="all, delete-orphan")
+
+    @property
+    def game_matchup(self) -> str | None:
+        return self.game.matchup if self.game else None
+
+    @property
+    def game_scheduled_at(self):
+        return self.game.scheduled_at if self.game else None

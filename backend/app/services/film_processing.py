@@ -3,8 +3,10 @@ import subprocess
 from pathlib import Path
 from typing import List
 
+import httpx
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models.film_segment import FilmSegment
 from app.models.game_upload import GameUpload
 
@@ -14,6 +16,7 @@ class FilmProcessingService:
 
     def __init__(self, db: Session):
         self.db = db
+        self.settings = get_settings()
 
     def process_upload(self, upload_id: int) -> None:
         upload = (
@@ -24,29 +27,80 @@ class FilmProcessingService:
         if not upload or not upload.storage_url:
             return
 
-        duration = self._probe_duration(Path(upload.storage_url))
-        if duration is not None:
-            upload.duration_seconds = int(duration)
-
-        # Only add suggestions if none exist yet so we do not duplicate work.
-        existing_segments = (
-            self.db.query(FilmSegment)
-            .filter(FilmSegment.upload_id == upload.id)
-            .count()
-        )
-        if existing_segments == 0 and duration and duration > 0:
-            segments = self._suggest_segments(duration)
-            for segment in segments:
-                film_segment = FilmSegment(
-                    upload_id=upload.id,
-                    start_second=segment["start"],
-                    end_second=segment["end"],
-                    label=segment["label"],
-                    notes=segment["notes"],
-                )
-                self.db.add(film_segment)
-
+        upload.status = "processing"
         self.db.commit()
+
+        status = "ready"
+        duration = self._probe_duration(Path(upload.storage_url))
+        try:
+            if duration is not None:
+                upload.duration_seconds = int(duration)
+
+            existing_segments = (
+                self.db.query(FilmSegment)
+                .filter(FilmSegment.upload_id == upload.id)
+                .count()
+            )
+            if existing_segments == 0 and duration and duration > 0:
+                segments = self._fetch_model_segments(upload) or self._suggest_segments(duration)
+                for segment in segments:
+                    film_segment = FilmSegment(
+                        upload_id=upload.id,
+                        start_second=segment["start"],
+                        end_second=segment["end"],
+                        label=segment.get("label"),
+                        notes=segment.get("notes"),
+                    )
+                    self.db.add(film_segment)
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            upload.status = status
+            self.db.commit()
+
+    def _fetch_model_segments(self, upload: GameUpload) -> List[dict]:
+        """Try to fetch model-generated segments from a gateway. Returns [] on failure."""
+        if not self.settings.model_gateway_url:
+            return []
+        payload = {
+            "upload_id": upload.id,
+            "storage_url": upload.storage_url,
+            "duration_seconds": upload.duration_seconds,
+            "game_id": upload.game_id,
+            "title": upload.title,
+        }
+        headers = {}
+        if self.settings.model_gateway_token:
+            headers["Authorization"] = f"Bearer {self.settings.model_gateway_token}"
+        try:
+            response = httpx.post(
+                self.settings.model_gateway_url,
+                json=payload,
+                headers=headers,
+                timeout=20,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            print(f"[FILM] Model gateway failed: {exc}")
+            return []
+        segments = data.get("segments", [])
+        normalized = []
+        for segment in segments:
+            start = int(segment.get("start_second", segment.get("start", 0)))
+            end = int(segment.get("end_second", segment.get("end", 0)))
+            if end <= start:
+                continue
+            normalized.append(
+                {
+                    "start": start,
+                    "end": end,
+                    "label": segment.get("label"),
+                    "notes": segment.get("notes"),
+                }
+            )
+        return normalized
 
     def _probe_duration(self, path: Path) -> float | None:
         """Use ffprobe if available to detect duration of the uploaded video."""

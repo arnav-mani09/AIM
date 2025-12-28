@@ -14,5 +14,6 @@ class Game(Base):
 
     possessions = relationship("Possession", back_populates="game", cascade="all, delete-orphan")
     clips = relationship("Clip", back_populates="game", cascade="all, delete-orphan")
+    uploads = relationship("GameUpload", back_populates="game")
     home_team = relationship("Team", foreign_keys=[home_team_id], back_populates="games_home")
     away_team = relationship("Team", foreign_keys=[away_team_id], back_populates="games_away")

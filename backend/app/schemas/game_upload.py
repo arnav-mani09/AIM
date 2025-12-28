@@ -16,6 +16,9 @@ class GameUploadRead(BaseModel):
   storage_url: str
   uploaded_at: datetime
   duration_seconds: int | None = None
+  game_id: int | None = None
+  game_matchup: str | None = None
+  game_scheduled_at: datetime | None = None
 
   class Config:
     from_attributes = True
