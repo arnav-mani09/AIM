@@ -8,9 +8,15 @@ settings = get_settings()
 
 app = FastAPI(title=settings.project_name)
 
+allowed_origins = {
+    settings.frontend_base_url,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+}
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=sorted(origin for origin in allowed_origins if origin),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
