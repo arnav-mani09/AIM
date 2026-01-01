@@ -42,9 +42,13 @@ export async function getGameStats(baseUrl?: string, matchup?: string): Promise<
   if (matchup) {
     target.searchParams.set("matchup", matchup);
   }
-  const response = await fetch(target);
-  if (!response.ok) {
-    throw new Error("Failed to fetch stats");
+  try {
+    const response = await fetch(target, { cache: "no-store" });
+    if (!response.ok) {
+      return getMockStats(matchup);
+    }
+    return response.json();
+  } catch {
+    return getMockStats(matchup);
   }
-  return response.json();
 }
