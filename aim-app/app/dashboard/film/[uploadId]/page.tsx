@@ -439,19 +439,4 @@ export default function FilmEditorPage({ params }: { params: Params }) {
       ) : null}
     </main>
   );
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    const handleTimeUpdate = () => {
-      if (previewBounds && video.currentTime >= previewBounds.end) {
-        video.pause();
-        setPreviewBounds(null);
-      }
-    };
-    video.addEventListener("timeupdate", handleTimeUpdate);
-    return () => {
-      video.removeEventListener("timeupdate", handleTimeUpdate);
-    };
-  }, [previewBounds]);
 }

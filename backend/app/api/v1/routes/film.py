@@ -13,7 +13,6 @@ from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.game_upload import GameUpload
 from app.models.game import Game
-from app.models.team_membership import TeamMembership
 from app.models.film_segment import FilmSegment
 from app.models.clip import Clip
 from app.schemas.game_upload import GameUploadRead
@@ -27,17 +26,6 @@ settings = get_settings()
 router = APIRouter(prefix="/teams/{team_id}/film", tags=["film"])
 raw_root = Path(settings.media_root) / "raw"
 raw_root.mkdir(parents=True, exist_ok=True)
-
-
-def _require_member(db: Session, team_id: int, user_id: int) -> TeamMembership:
-    membership = (
-        db.query(TeamMembership)
-        .filter(TeamMembership.team_id == team_id, TeamMembership.user_id == user_id)
-        .first()
-    )
-    if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this team")
-    return membership
 
 
 def _get_upload(db: Session, team_id: int, upload_id: int) -> GameUpload:
@@ -77,9 +65,8 @@ def _process_upload_async(upload_id: int) -> None:
 def list_game_uploads(
     team_id: int,
     db: Session = Depends(deps.get_db_session),
-    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_member(db, team_id, current_user.id)
     uploads = (
         db.query(GameUpload)
         .filter(GameUpload.team_id == team_id)
@@ -94,9 +81,8 @@ def get_game_upload(
     team_id: int,
     upload_id: int,
     db: Session = Depends(deps.get_db_session),
-    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_member(db, team_id, current_user.id)
     upload = _get_upload(db, team_id, upload_id)
     return upload
 
@@ -111,8 +97,8 @@ async def upload_game_film(
     game_id: int | None = Form(None),
     db: Session = Depends(deps.get_db_session),
     current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_member(db, team_id, current_user.id)
     game = None
     if game_id is not None:
         game = _get_game(db, game_id)
@@ -141,9 +127,8 @@ def delete_game_film(
     team_id: int,
     upload_id: int,
     db: Session = Depends(deps.get_db_session),
-    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_member(db, team_id, current_user.id)
     upload = _get_upload(db, team_id, upload_id)
     # Remove any clips that were published from this upload so nothing points
     # at a file that is about to be deleted.
@@ -169,9 +154,8 @@ def stream_game_film(
     team_id: int,
     upload_id: int,
     db: Session = Depends(deps.get_db_session),
-    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_member(db, team_id, current_user.id)
     upload = _get_upload(db, team_id, upload_id)
     file_path = Path(upload.storage_url)
     if not file_path.exists():
@@ -189,9 +173,8 @@ def list_segments(
     team_id: int,
     upload_id: int,
     db: Session = Depends(deps.get_db_session),
-    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_member(db, team_id, current_user.id)
     _get_upload(db, team_id, upload_id)
     segments = (
         db.query(FilmSegment)
@@ -209,8 +192,8 @@ def create_segment(
     payload: FilmSegmentCreate,
     db: Session = Depends(deps.get_db_session),
     current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_member(db, team_id, current_user.id)
     _get_upload(db, team_id, upload_id)
     if payload.end_second <= payload.start_second:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="End must be after start")
@@ -235,8 +218,8 @@ def publish_segment_as_clip(
     segment_id: int,
     db: Session = Depends(deps.get_db_session),
     current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_member(db, team_id, current_user.id)
     upload = _get_upload(db, team_id, upload_id)
     segment = (
         db.query(FilmSegment)

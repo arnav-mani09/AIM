@@ -16,6 +16,7 @@ def ingest_possessions(
     scheduled_at: datetime = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(deps.get_db_session),
+    _current_user=Depends(deps.get_current_user),
 ):
     temp_path = Path("/tmp") / file.filename
     temp_path.write_bytes(file.file.read())

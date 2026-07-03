@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import get_db
+from app.models.team_membership import TeamMembership
 from app.models.user import User
 from app.schemas.token import TokenPayload
 
@@ -32,3 +33,18 @@ def get_current_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user
+
+
+def require_team_membership(
+    team_id: int,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> TeamMembership:
+    membership = (
+        db.query(TeamMembership)
+        .filter(TeamMembership.team_id == team_id, TeamMembership.user_id == current_user.id)
+        .first()
+    )
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this team")
+    return membership

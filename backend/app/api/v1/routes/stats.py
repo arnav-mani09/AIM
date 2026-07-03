@@ -11,5 +11,6 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 def read_game_stats(
     matchup: str | None = Query(default=None),
     stats_service: StatsService = Depends(StatsService.as_dependency),
+    _current_user=Depends(deps.get_current_user),
 ):
     return stats_service.get_stats(matchup)

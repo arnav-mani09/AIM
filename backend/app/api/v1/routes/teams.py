@@ -19,17 +19,6 @@ from app.schemas.team import (
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
-def _require_membership(db: Session, team_id: int, user_id: int) -> TeamMembership:
-    membership = (
-        db.query(TeamMembership)
-        .filter(TeamMembership.team_id == team_id, TeamMembership.user_id == user_id)
-        .first()
-    )
-    if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this team")
-    return membership
-
-
 def _generate_invite_code(db: Session) -> str:
     while True:
         candidate = secrets.token_urlsafe(5).upper()
@@ -79,8 +68,8 @@ def create_invite(
     payload: TeamInviteCreate,
     db: Session = Depends(deps.get_db_session),
     current_user=Depends(deps.get_current_user),
+    membership=Depends(deps.require_team_membership),
 ):
-    membership = _require_membership(db, team_id, current_user.id)
     if membership.role not in {"coach", "admin"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only coaches can create invites")
 

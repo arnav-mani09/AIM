@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.core.config import get_settings
 from app.models.clip import Clip
-from app.models.team_membership import TeamMembership
 from app.schemas.clip import ClipRead
 from app.services.clip_stats import hydrate_clip_stats
 
@@ -19,17 +18,6 @@ router = APIRouter(prefix="/teams/{team_id}/clips", tags=["clips"])
 settings = get_settings()
 media_root = Path(settings.media_root)
 media_root.mkdir(parents=True, exist_ok=True)
-
-
-def _require_membership(db: Session, team_id: int, user_id: int) -> TeamMembership:
-    membership = (
-        db.query(TeamMembership)
-        .filter(TeamMembership.team_id == team_id, TeamMembership.user_id == user_id)
-        .first()
-    )
-    if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this team")
-    return membership
 
 
 def _get_clip(db: Session, team_id: int, clip_id: int) -> Clip:
@@ -55,9 +43,8 @@ def _store_upload(file: UploadFile) -> str:
 def list_team_clips(
     team_id: int,
     db: Session = Depends(deps.get_db_session),
-    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_membership(db, team_id, current_user.id)
     clips = (
         db.query(Clip)
         .filter(Clip.team_id == team_id)
@@ -74,9 +61,8 @@ def get_clip(
     team_id: int,
     clip_id: int,
     db: Session = Depends(deps.get_db_session),
-    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_membership(db, team_id, current_user.id)
     clip = _get_clip(db, team_id, clip_id)
     hydrate_clip_stats(db, clip)
     return clip
@@ -91,8 +77,8 @@ async def upload_team_clip(
     game_id: int | None = Form(None),
     db: Session = Depends(deps.get_db_session),
     current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_membership(db, team_id, current_user.id)
     storage_path = _store_upload(file)
     clip = Clip(
         title=title,
@@ -116,8 +102,8 @@ def delete_team_clip(
     clip_id: int,
     db: Session = Depends(deps.get_db_session),
     current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_membership(db, team_id, current_user.id)
     clip = _get_clip(db, team_id, clip_id)
     if clip.uploaded_by_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only delete your own clips")
@@ -140,9 +126,8 @@ def stream_clip(
     team_id: int,
     clip_id: int,
     db: Session = Depends(deps.get_db_session),
-    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
 ):
-    _require_membership(db, team_id, current_user.id)
     clip = _get_clip(db, team_id, clip_id)
     file_path = Path(clip.storage_url)
     if not file_path.exists():

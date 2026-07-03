@@ -5,3 +5,6 @@ backend/.venv/**
 backend/.venv/*
 node_modules/
 aim-app/.next/
+__pycache__/
+*.pyc
+supabase/.temp/
