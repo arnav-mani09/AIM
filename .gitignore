@@ -8,3 +8,4 @@ aim-app/.next/
 __pycache__/
 *.pyc
 supabase/.temp/
+*.tsbuildinfo

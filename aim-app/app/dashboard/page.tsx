@@ -1,17 +1,20 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import {
   ClipRecord,
+  GameRecord,
   GameUploadRecord,
+  createGame,
   createInvite,
   createTeam,
   deleteClip,
   deleteGameFilm,
   fetchGameFilm,
+  fetchGames,
   fetchTeamClips,
   fetchTeams,
   joinTeam,
@@ -23,6 +26,8 @@ import { formatLocalDateTime } from "@/lib/dateTime";
 
 export default function DashboardPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeTab = (searchParams.get("tab") as "film" | "games" | "chat" | "teams" | null) ?? "film";
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [teams, setTeams] = useState<TeamMembership[]>([]);
@@ -44,8 +49,11 @@ export default function DashboardPage() {
   const [filmError, setFilmError] = useState<string | null>(null);
   const [filmStatus, setFilmStatus] = useState<"idle" | "loading" | "error" | "success">("idle");
   const [filmFeedback, setFilmFeedback] = useState("");
-  const [activeTab, setActiveTab] = useState<"film" | "chat" | "teams">("film");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [gamesList, setGamesList] = useState<GameRecord[]>([]);
+  const [gamesLoading, setGamesLoading] = useState(false);
+  const [gamesError, setGamesError] = useState<string | null>(null);
+  const [newGameForm, setNewGameForm] = useState({ matchup: "", scheduledAt: "", location: "" });
+  const [newGameStatus, setNewGameStatus] = useState<"idle" | "loading">("idle");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -98,6 +106,40 @@ export default function DashboardPage() {
         setClipLoading(false);
       });
   }, [authToken, filmTeamId]);
+
+  useEffect(() => {
+    if (!authToken || filmTeamId === "") {
+      setGamesList([]);
+      return;
+    }
+    setGamesLoading(true);
+    fetchGames(authToken, filmTeamId)
+      .then((data) => {
+        setGamesList(data);
+        setGamesError(null);
+      })
+      .catch((error) => setGamesError(error instanceof Error ? error.message : "Unable to load games"))
+      .finally(() => setGamesLoading(false));
+  }, [authToken, filmTeamId]);
+
+  const handleCreateGame = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!authToken || filmTeamId === "" || !newGameForm.matchup || !newGameForm.scheduledAt) return;
+    setNewGameStatus("loading");
+    try {
+      const game = await createGame(authToken, filmTeamId, {
+        matchup: newGameForm.matchup,
+        scheduled_at: new Date(newGameForm.scheduledAt).toISOString(),
+        location: newGameForm.location || undefined,
+      });
+      setGamesList((prev) => [game, ...prev]);
+      setNewGameForm({ matchup: "", scheduledAt: "", location: "" });
+    } catch (error) {
+      setGamesError(error instanceof Error ? error.message : "Failed to create game");
+    } finally {
+      setNewGameStatus("idle");
+    }
+  };
 
   const coachTeams = useMemo(
     () => teams.filter((membership) => membership.role === "coach" || membership.role === "admin"),
@@ -226,56 +268,20 @@ export default function DashboardPage() {
     }
   };
 
-  const handleSignOut = () => {
-    window.localStorage.removeItem("aim_access_token");
-    router.push("/");
-  };
-
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-8 px-6 py-12">
-      <header className="flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => setSidebarOpen(true)}
-            className="flex h-10 w-10 items-center justify-center rounded-full border border-stroke text-[#0e1a2e]"
-            aria-label="Open menu"
-          >
-            ☰
-          </button>
-          <div className="text-right">
-            <p className="label-text">Workspace</p>
-            <h1 className="mt-1 text-2xl font-semibold text-[#0e1a2e]">Your AIM operations center</h1>
-          </div>
-        </div>
-        <p className="text-subtext">
+    <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-8 px-6 py-10 md:py-12">
+      <header className="flex flex-col gap-1">
+        <p className="label-text">Workspace</p>
+        <h1 className="text-2xl font-semibold text-ink">Your AIM operations center</h1>
+        <p className="mt-1 text-subtext">
           Upload film, collaborate in chat, review past insights, and manage teams—all powered by AIM.
         </p>
       </header>
 
-      <nav className="flex flex-wrap gap-2 rounded-2xl border border-stroke bg-white p-2">
-        {[
-          { id: "film", label: "Film + Clips" },
-          { id: "chat", label: "AI Chat" },
-          { id: "teams", label: "Team Spaces" },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setActiveTab(tab.id as typeof activeTab)}
-            className={`rounded-full px-4 py-2 text-sm font-semibold ${
-              activeTab === tab.id ? "bg-[#0e1a2e] text-white" : "text-[#0e1a2e] hover:bg-[#ecf2fb]"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
-
       {activeTab === "film" && (
         <>
           <section className="section-card">
-            <h2 className="text-2xl font-semibold text-[#0e1a2e]">Full game film</h2>
+            <h2 className="text-2xl font-semibold text-ink">Full game film</h2>
             <p className="mt-2 text-sm text-subtext">
               Upload complete quarters or games. AIM will process them, then you can trim and share highlight clips.
             </p>
@@ -287,7 +293,7 @@ export default function DashboardPage() {
                   onChange={(event) =>
                     setFilmTeamId(event.target.value === "" ? "" : Number(event.target.value))
                   }
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="rounded-xl border border-stroke px-3 py-2 text-ink"
                 >
                   <option value="">Select a team</option>
                   {teams.map((membership) => (
@@ -302,7 +308,7 @@ export default function DashboardPage() {
                 <input
                   type="text"
                   name="title"
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="rounded-xl border border-stroke px-3 py-2 text-ink"
                   placeholder="Valley vs Central - Q1"
                   required
                 />
@@ -313,7 +319,7 @@ export default function DashboardPage() {
                   type="file"
                   name="file"
                   accept="video/mp4,video/quicktime"
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="w-full rounded-xl border border-stroke px-3 py-2 text-ink"
                   required
                 />
               </label>
@@ -322,14 +328,14 @@ export default function DashboardPage() {
                 <textarea
                   name="notes"
                   rows={3}
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="rounded-xl border border-stroke px-3 py-2 text-ink"
                   placeholder="Quarter, opponent, angle…"
                 />
               </label>
               <div className="md:col-span-2 flex items-center gap-3">
                 <button
                   type="submit"
-                  className="rounded-2xl bg-[#0e1a2e] px-4 py-2 font-semibold text-white disabled:opacity-60"
+                  className="rounded-2xl bg-ink px-4 py-2 font-semibold text-white disabled:opacity-60"
                   disabled={filmStatus === "loading"}
                 >
                   {filmStatus === "loading" ? "Uploading…" : "Upload raw film"}
@@ -344,7 +350,7 @@ export default function DashboardPage() {
 
             <div className="mt-6 rounded-2xl border border-stroke p-4">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-[#0e1a2e]">Film library</p>
+                <p className="text-sm font-semibold text-ink">Film library</p>
                 {filmTeamId && (
                   <p className="text-xs text-subtext">
                     Showing film for{" "}
@@ -369,7 +375,7 @@ export default function DashboardPage() {
                       href={`/dashboard/film/${upload.id}?team=${filmTeamId}`}
                       className="flex flex-col"
                     >
-                      <p className="font-semibold text-[#0e1a2e]">{upload.title}</p>
+                      <p className="font-semibold text-ink">{upload.title}</p>
                       <p className="text-xs text-subtext">
                         Uploaded {formatLocalDateTime(upload.uploaded_at)}
                         {upload.game_matchup && (
@@ -383,9 +389,17 @@ export default function DashboardPage() {
                       </p>
                     </Link>
                         <div className="flex items-center gap-2">
-                          <span className="rounded-full bg-[#ecf2fb] px-3 py-1 text-xs text-[#0e1a2e]">
+                          <span className="rounded-full bg-tint px-3 py-1 text-xs text-ink">
                             {upload.status}
                           </span>
+                          {upload.game_id && (
+                            <Link
+                              href={`/dashboard/games/${upload.game_id}/breakdown?team=${filmTeamId}`}
+                              className="text-xs font-semibold text-accent hover:underline"
+                            >
+                              Shot breakdown
+                            </Link>
+                          )}
                           <button
                             onClick={() => handleDeleteUpload(upload.id)}
                             className="text-xs text-red-500 hover:underline"
@@ -403,14 +417,14 @@ export default function DashboardPage() {
           </section>
 
           <section className="section-card">
-            <h2 className="text-2xl font-semibold text-[#0e1a2e]">Published clips</h2>
+            <h2 className="text-2xl font-semibold text-ink">Published clips</h2>
             <p className="mt-2 text-sm text-subtext">
               Clips appear here after you trim segments from a full game upload. Use the film library above to
               open the editor and publish highlights.
             </p>
             <div className="mt-4 rounded-2xl border border-stroke p-4">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-[#0e1a2e]">Recent clips</p>
+                <p className="text-sm font-semibold text-ink">Recent clips</p>
                 {filmTeamId && (
                   <p className="text-xs text-subtext">
                     Showing clips for{" "}
@@ -435,7 +449,7 @@ export default function DashboardPage() {
                       href={`/dashboard/clips/${clip.id}?team=${filmTeamId}`}
                       className="flex flex-col"
                     >
-                      <p className="font-semibold text-[#0e1a2e]">{clip.title}</p>
+                      <p className="font-semibold text-ink">{clip.title}</p>
                       <p className="text-xs text-subtext">
                         Uploaded {formatLocalDateTime(clip.uploaded_at)}
                         {clip.game_matchup && (
@@ -449,7 +463,7 @@ export default function DashboardPage() {
                       </p>
                     </Link>
                         <div className="flex items-center gap-2">
-                          <span className="rounded-full bg-[#ecf2fb] px-3 py-1 text-xs text-[#0e1a2e]">
+                          <span className="rounded-full bg-tint px-3 py-1 text-xs text-ink">
                             {clip.status}
                           </span>
                           {clip.uploaded_by_id && clip.uploaded_by_id === currentUserId && (
@@ -472,17 +486,115 @@ export default function DashboardPage() {
         </>
       )}
 
+      {activeTab === "games" && (
+        <section className="section-card">
+          <h2 className="text-2xl font-semibold text-ink">Games</h2>
+          <p className="mt-2 text-sm text-subtext">
+            Create a game, then break it down: log shot locations while reviewing film to build a live team
+            shot chart.
+          </p>
+
+          <form onSubmit={handleCreateGame} className="mt-6 grid gap-4 md:grid-cols-2">
+            <label className="flex flex-col gap-2 text-sm">
+              Team
+              <select
+                value={filmTeamId}
+                onChange={(event) => setFilmTeamId(event.target.value === "" ? "" : Number(event.target.value))}
+                className="rounded-xl border border-stroke px-3 py-2 text-ink"
+              >
+                <option value="">Select a team</option>
+                {teams.map((membership) => (
+                  <option key={membership.team.id} value={membership.team.id}>
+                    {membership.team.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-2 text-sm">
+              Matchup
+              <input
+                type="text"
+                value={newGameForm.matchup}
+                onChange={(event) => setNewGameForm((prev) => ({ ...prev, matchup: event.target.value }))}
+                className="rounded-xl border border-stroke px-3 py-2 text-ink"
+                placeholder="Valley vs Central"
+                required
+              />
+            </label>
+            <label className="flex flex-col gap-2 text-sm">
+              Date & time
+              <input
+                type="datetime-local"
+                value={newGameForm.scheduledAt}
+                onChange={(event) => setNewGameForm((prev) => ({ ...prev, scheduledAt: event.target.value }))}
+                className="rounded-xl border border-stroke px-3 py-2 text-ink"
+                required
+              />
+            </label>
+            <label className="flex flex-col gap-2 text-sm">
+              Location
+              <input
+                type="text"
+                value={newGameForm.location}
+                onChange={(event) => setNewGameForm((prev) => ({ ...prev, location: event.target.value }))}
+                className="rounded-xl border border-stroke px-3 py-2 text-ink"
+                placeholder="Home gym"
+              />
+            </label>
+            <div className="md:col-span-2">
+              <button
+                type="submit"
+                className="rounded-2xl bg-accent px-4 py-2 font-semibold text-white disabled:opacity-60"
+                disabled={filmTeamId === "" || newGameStatus === "loading"}
+              >
+                {newGameStatus === "loading" ? "Creating…" : "Create game"}
+              </button>
+            </div>
+          </form>
+
+          <div className="mt-6 rounded-2xl border border-stroke p-4">
+            <p className="text-sm font-semibold text-ink">Team games</p>
+            {filmTeamId === "" ? (
+              <p className="mt-2 text-sm text-subtext">Select a team to view games.</p>
+            ) : gamesLoading ? (
+              <p className="mt-2 text-sm text-subtext">Loading games…</p>
+            ) : gamesError ? (
+              <p className="mt-2 text-sm text-red-500">{gamesError}</p>
+            ) : gamesList.length === 0 ? (
+              <p className="mt-2 text-sm text-subtext">No games yet — create one above.</p>
+            ) : (
+              <ul className="mt-4 space-y-3 text-sm">
+                {gamesList.map((game) => (
+                  <li key={game.id} className="flex items-center justify-between gap-3 rounded-2xl border border-stroke p-4">
+                    <div>
+                      <p className="font-semibold text-ink">{game.matchup}</p>
+                      <p className="text-xs text-subtext">{formatLocalDateTime(game.scheduled_at)}</p>
+                    </div>
+                    <Link
+                      href={`/dashboard/games/${game.id}/breakdown?team=${filmTeamId}`}
+                      className="rounded-full bg-accent px-4 py-2 text-xs font-semibold text-white"
+                    >
+                      Breakdown →
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
+      )}
+
       {activeTab === "chat" && (
         <section className="section-card grid gap-6 md:grid-cols-2">
           <div>
-            <h3 className="text-xl font-semibold text-[#0e1a2e]">AI chat</h3>
+            <h3 className="text-xl font-semibold text-ink">AI chat</h3>
             <p className="mt-2 text-sm text-subtext">
               Ask about lineups, shooters, or scouting adjustments. Responses will use the latest stats feed.
             </p>
             <div className="mt-4 rounded-2xl border border-stroke p-4">
               <p className="text-xs uppercase tracking-[0.2em] text-subtext">Chat thread</p>
               <div className="mt-3 flex flex-col gap-3 text-sm">
-                <div className="rounded-2xl bg-[#ecf2fb] px-3 py-2 text-[#0e1a2e]">
+                <div className="rounded-2xl bg-tint px-3 py-2 text-ink">
                   Which player is most reliable in crunch time?
                 </div>
                 <div className="self-end rounded-2xl bg-accent px-3 py-2 text-white">
@@ -493,14 +605,14 @@ export default function DashboardPage() {
           </div>
 
           <div>
-            <h3 className="text-xl font-semibold text-[#0e1a2e]">Past insights</h3>
+            <h3 className="text-xl font-semibold text-ink">Past insights</h3>
             <ul className="mt-3 space-y-3 text-sm text-subtext">
               <li className="rounded-2xl border border-stroke p-4">
-                <strong className="text-[#0e1a2e]">Valley vs Central</strong>
+                <strong className="text-ink">Valley vs Central</strong>
                 <p>Possession split 64/36 with Lane flagged as premier shooter.</p>
               </li>
               <li className="rounded-2xl border border-stroke p-4">
-                <strong className="text-[#0e1a2e]">Northside vs Westfield</strong>
+                <strong className="text-ink">Northside vs Westfield</strong>
                 <p>Press break turnover issues for #12 Brooks—recommend extra reps.</p>
               </li>
             </ul>
@@ -511,7 +623,7 @@ export default function DashboardPage() {
       {activeTab === "teams" && (
         <section className="section-card space-y-6">
           <div>
-            <h3 className="text-xl font-semibold text-[#0e1a2e]">Team spaces</h3>
+            <h3 className="text-xl font-semibold text-ink">Team spaces</h3>
             <p className="mt-2 text-sm text-subtext">
               Coaches create codes so players, staff, and recruiters can collaborate securely.
             </p>
@@ -532,7 +644,7 @@ export default function DashboardPage() {
                     <li key={membership.id} className="rounded-2xl border border-stroke p-4">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-lg font-semibold text-[#0e1a2e]">{membership.team.name}</p>
+                          <p className="text-lg font-semibold text-ink">{membership.team.name}</p>
                           <p className="text-sm text-subtext">
                             {membership.team.level ?? "Program"} • {membership.team.season_label ?? "Season TBD"}
                           </p>
@@ -561,7 +673,7 @@ export default function DashboardPage() {
                   type="text"
                   value={createForm.name}
                   onChange={(event) => setCreateForm((prev) => ({ ...prev, name: event.target.value }))}
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="rounded-xl border border-stroke px-3 py-2 text-ink"
                   required
                 />
               </label>
@@ -571,7 +683,7 @@ export default function DashboardPage() {
                   type="text"
                   value={createForm.level}
                   onChange={(event) => setCreateForm((prev) => ({ ...prev, level: event.target.value }))}
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="rounded-xl border border-stroke px-3 py-2 text-ink"
                   placeholder="Varsity, JV, etc."
                 />
               </label>
@@ -581,7 +693,7 @@ export default function DashboardPage() {
                   type="text"
                   value={createForm.season}
                   onChange={(event) => setCreateForm((prev) => ({ ...prev, season: event.target.value }))}
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="rounded-xl border border-stroke px-3 py-2 text-ink"
                   placeholder="2024-25"
                 />
               </label>
@@ -604,14 +716,14 @@ export default function DashboardPage() {
                   type="text"
                   value={teamCode}
                   onChange={(event) => setTeamCode(event.target.value)}
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="rounded-xl border border-stroke px-3 py-2 text-ink"
                   placeholder="e.g., VALLEY-BOYS-2025"
                   required
                 />
               </label>
               <button
                 type="submit"
-                className="w-fit rounded-2xl border border-stroke px-4 py-2 font-semibold text-[#0e1a2e]"
+                className="w-fit rounded-2xl border border-stroke px-4 py-2 font-semibold text-ink"
               >
                 Request access
               </button>
@@ -627,7 +739,7 @@ export default function DashboardPage() {
                   onChange={(event) =>
                     setInviteTeamId(event.target.value === "" ? "" : Number(event.target.value))
                   }
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="rounded-xl border border-stroke px-3 py-2 text-ink"
                 >
                   <option value="">Choose a team</option>
                   {coachTeams.map((membership) => (
@@ -643,7 +755,7 @@ export default function DashboardPage() {
                   name="expires"
                   type="number"
                   min={1}
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="rounded-xl border border-stroke px-3 py-2 text-ink"
                 />
               </label>
               <label className="flex flex-col gap-1">
@@ -652,18 +764,18 @@ export default function DashboardPage() {
                   name="maxUses"
                   type="number"
                   min={1}
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="rounded-xl border border-stroke px-3 py-2 text-ink"
                 />
               </label>
               <button
                 type="submit"
-                className="rounded-2xl bg-[#0e1a2e] px-4 py-2 font-semibold text-white disabled:opacity-60"
+                className="rounded-2xl bg-ink px-4 py-2 font-semibold text-white disabled:opacity-60"
                 disabled={inviteTeamId === "" || inviteStatus === "loading"}
               >
                 {inviteStatus === "loading" ? "Creating…" : "Generate code"}
               </button>
               {inviteResult && (
-                <div className="rounded-xl bg-[#ecf2fb] px-3 py-2 text-sm text-[#0e1a2e]">
+                <div className="rounded-xl bg-tint px-3 py-2 text-sm text-ink">
                   Share code <strong>{inviteResult.code}</strong> ({inviteResult.role})
                 </div>
               )}
@@ -675,42 +787,6 @@ export default function DashboardPage() {
         </section>
       )}
 
-      {sidebarOpen && (
-        <div className="fixed inset-0 z-50 flex">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/30"
-            onClick={() => setSidebarOpen(false)}
-            aria-label="Close menu"
-          />
-          <aside className="relative z-10 h-full w-72 bg-white p-6 shadow-xl">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold text-[#0e1a2e]">AIM Menu</p>
-              <button
-                type="button"
-                onClick={() => setSidebarOpen(false)}
-                className="rounded-full border border-stroke px-3 py-1 text-xs text-[#0e1a2e]"
-              >
-                Close
-              </button>
-            </div>
-            <nav className="mt-6 flex flex-col gap-3 text-sm">
-              <button onClick={handleSignOut} className="rounded-xl border border-stroke px-3 py-2 text-left">
-                Sign out
-              </button>
-              <a href="#" className="rounded-xl border border-stroke px-3 py-2">
-                License
-              </a>
-              <a href="mailto:support@aimsports.com" className="rounded-xl border border-stroke px-3 py-2">
-                Get help
-              </a>
-              <a href="#" className="rounded-xl border border-stroke px-3 py-2">
-                Privacy & terms
-              </a>
-            </nav>
-          </aside>
-        </div>
-      )}
     </main>
   );
 }

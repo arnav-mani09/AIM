@@ -17,3 +17,7 @@ class Game(Base):
     uploads = relationship("GameUpload", back_populates="game")
     home_team = relationship("Team", foreign_keys=[home_team_id], back_populates="games_home")
     away_team = relationship("Team", foreign_keys=[away_team_id], back_populates="games_away")
+
+    @property
+    def primary_upload_id(self) -> int | None:
+        return self.uploads[0].id if self.uploads else None

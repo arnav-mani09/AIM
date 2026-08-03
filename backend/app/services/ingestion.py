@@ -34,6 +34,7 @@ class StatsIngestionService:
                     outcome=row.get("outcome"),
                     video_start_second=start_second,
                     video_end_second=end_second,
+                    source="csv",
                 )
                 self.db.add(possession)
         self.db.commit()

@@ -11,10 +11,14 @@ const config: Config = {
       colors: {
         background: "#f5f7fb",
         card: "#ffffff",
+        ink: "#0e1a2e",
         accent: "#1a4d84",
+        accentDark: "#0f3a63",
         accentMuted: "rgba(26, 77, 132, 0.08)",
         subtext: "#54627a",
-        stroke: "#dfe6f1"
+        stroke: "#dfe6f1",
+        tint: "#eaf1fb",
+        tintDeep: "#dbe8fa"
       },
       fontFamily: {
         grotesk: ["Space Grotesk", "system-ui", "sans-serif"]

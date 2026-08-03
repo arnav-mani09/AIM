@@ -296,3 +296,184 @@ export async function publishFilmSegment(
   }
   return response.json();
 }
+
+export type PlayerRecord = {
+  id: number;
+  name: string;
+  jersey_number: string;
+  team_id?: number | null;
+};
+
+export type GameRecord = {
+  id: number;
+  matchup: string;
+  scheduled_at: string;
+  location?: string | null;
+  home_team_id?: number | null;
+  away_team_id?: number | null;
+  primary_upload_id?: number | null;
+};
+
+export type ShotZone =
+  | "restricted_area"
+  | "paint"
+  | "mid_range_left"
+  | "mid_range_right"
+  | "corner_three_left"
+  | "corner_three_right"
+  | "wing_three_left"
+  | "wing_three_right"
+  | "top_of_key_three";
+
+export type PossessionSource = "manual" | "csv" | "ai";
+export type ReviewStatus = "pending" | "confirmed" | "rejected";
+
+export type PossessionRecord = {
+  id: number;
+  game_id: number;
+  player_id?: number | null;
+  player_name?: string | null;
+  label: string;
+  outcome?: string | null;
+  shot_made?: boolean | null;
+  shot_zone?: ShotZone | null;
+  shot_x?: number | null;
+  shot_y?: number | null;
+  shot_value?: 2 | 3 | null;
+  video_start_second?: number | null;
+  video_end_second?: number | null;
+  source: PossessionSource;
+  review_status: ReviewStatus;
+  created_by_id?: number | null;
+  reviewed_by_id?: number | null;
+  created_at: string;
+  updated_at?: string | null;
+};
+
+export type ZoneStat = {
+  zone: ShotZone;
+  attempts: number;
+  makes: number;
+  fg_pct: number | null;
+};
+
+export type ShotChartRecord = {
+  game_id: number;
+  team_id: number;
+  total_attempts: number;
+  total_makes: number;
+  overall_fg_pct: number | null;
+  zones: ZoneStat[];
+};
+
+export function fetchPlayers(token: string, teamId: number): Promise<PlayerRecord[]> {
+  return request<PlayerRecord[]>(`/api/v1/teams/${teamId}/players`, token);
+}
+
+export function createPlayer(
+  token: string,
+  teamId: number,
+  payload: { name: string; jersey_number: string }
+): Promise<PlayerRecord> {
+  return request<PlayerRecord>(`/api/v1/teams/${teamId}/players`, token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchGames(token: string, teamId: number): Promise<GameRecord[]> {
+  return request<GameRecord[]>(`/api/v1/teams/${teamId}/games`, token);
+}
+
+export function createGame(
+  token: string,
+  teamId: number,
+  payload: { matchup: string; scheduled_at: string; location?: string }
+): Promise<GameRecord> {
+  return request<GameRecord>(`/api/v1/teams/${teamId}/games`, token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchGame(token: string, teamId: number, gameId: number): Promise<GameRecord> {
+  return request<GameRecord>(`/api/v1/teams/${teamId}/games/${gameId}`, token);
+}
+
+export function fetchPossessions(
+  token: string,
+  teamId: number,
+  gameId: number,
+  opts?: { reviewStatus?: ReviewStatus; shotOnly?: boolean }
+): Promise<PossessionRecord[]> {
+  const params = new URLSearchParams();
+  if (opts?.reviewStatus) params.set("review_status", opts.reviewStatus);
+  if (opts?.shotOnly) params.set("shot_only", "true");
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return request<PossessionRecord[]>(`/api/v1/teams/${teamId}/games/${gameId}/possessions${query}`, token);
+}
+
+export type PossessionPayload = {
+  player_id?: number | null;
+  label?: string;
+  outcome?: string;
+  shot_made?: boolean;
+  shot_zone?: ShotZone;
+  shot_x?: number;
+  shot_y?: number;
+  shot_value?: 2 | 3;
+  video_start_second?: number;
+  video_end_second?: number;
+};
+
+export function createPossession(
+  token: string,
+  teamId: number,
+  gameId: number,
+  payload: PossessionPayload
+): Promise<PossessionRecord> {
+  return request<PossessionRecord>(`/api/v1/teams/${teamId}/games/${gameId}/possessions`, token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updatePossession(
+  token: string,
+  teamId: number,
+  gameId: number,
+  possessionId: number,
+  payload: Partial<PossessionPayload> & { review_status?: ReviewStatus }
+): Promise<PossessionRecord> {
+  return request<PossessionRecord>(
+    `/api/v1/teams/${teamId}/games/${gameId}/possessions/${possessionId}`,
+    token,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function deletePossession(
+  token: string,
+  teamId: number,
+  gameId: number,
+  possessionId: number
+): Promise<void> {
+  const response = await fetch(
+    `${baseUrl}/api/v1/teams/${teamId}/games/${gameId}/possessions/${possessionId}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(detail.detail ?? "Failed to delete possession");
+  }
+}
+
+export function fetchShotChart(token: string, teamId: number, gameId: number): Promise<ShotChartRecord> {
+  return request<ShotChartRecord>(`/api/v1/teams/${teamId}/games/${gameId}/shot-chart`, token);
+}

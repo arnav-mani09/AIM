@@ -245,7 +245,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-6 px-6 py-10">
-      <Link href="/dashboard" className="text-sm text-subtext hover:text-[#0e1a2e]">
+      <Link href="/dashboard" className="text-sm text-subtext hover:text-ink">
         ← Back to dashboard
       </Link>
       {loading ? (
@@ -255,7 +255,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
       ) : upload ? (
         <>
           <section className="section-card">
-            <h1 className="text-3xl font-semibold text-[#0e1a2e]">{upload.title}</h1>
+            <h1 className="text-3xl font-semibold text-ink">{upload.title}</h1>
             <p className="mt-1 text-sm text-subtext">
               Uploaded {formatLocalDateTime(upload.uploaded_at)}
               {durationMinutes && ` • ${durationMinutes} min`}
@@ -289,7 +289,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
 
           <section className="section-card">
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-[#0e1a2e]">Suggested segments</h2>
+              <h2 className="text-xl font-semibold text-ink">Suggested segments</h2>
               <p className="text-xs uppercase tracking-[0.3em] text-subtext">Auto-generated</p>
             </div>
             {segments.length === 0 ? (
@@ -300,7 +300,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
                   <li key={segment.id} className="rounded-2xl border border-stroke p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="font-semibold text-[#0e1a2e]">
+                        <p className="font-semibold text-ink">
                           {segment.label ?? "Suggested segment"} ({formatTimestamp(segment.start_second)}–
                           {formatTimestamp(segment.end_second)})
                         </p>
@@ -309,13 +309,13 @@ export default function FilmEditorPage({ params }: { params: Params }) {
                       <div className="flex flex-wrap gap-2 text-xs">
                         <button
                           onClick={() => handlePreviewSegment(segment)}
-                          className="rounded-full border border-stroke px-3 py-1 font-semibold text-[#0e1a2e]"
+                          className="rounded-full border border-stroke px-3 py-1 font-semibold text-ink"
                         >
                           Preview
                         </button>
                         <button
                           onClick={() => applySegmentToForm(segment)}
-                          className="rounded-full border border-stroke px-3 py-1 font-semibold text-[#0e1a2e]"
+                          className="rounded-full border border-stroke px-3 py-1 font-semibold text-ink"
                         >
                           Load into form
                         </button>
@@ -389,7 +389,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
                   type="text"
                   value={label}
                   onChange={(event) => setLabel(event.target.value)}
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="rounded-xl border border-stroke px-3 py-2 text-ink"
                   placeholder="e.g., Lane crunch-time floater"
                   disabled={!isReady}
                 />
@@ -400,7 +400,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
                   rows={3}
                   value={notes}
                   onChange={(event) => setNotes(event.target.value)}
-                  className="rounded-xl border border-stroke px-3 py-2 text-[#0e1a2e]"
+                  className="rounded-xl border border-stroke px-3 py-2 text-ink"
                   disabled={!isReady}
                 />
               </label>
@@ -426,7 +426,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
                 <ul className="mt-3 space-y-3 text-sm">
                   {clips.map((clip) => (
                     <li key={clip.id} className="rounded-2xl border border-stroke p-4">
-                      <p className="font-semibold text-[#0e1a2e]">{clip.title}</p>
+                      <p className="font-semibold text-ink">{clip.title}</p>
                       {clip.notes && <p className="text-subtext">{clip.notes}</p>}
                     </li>
                   ))}

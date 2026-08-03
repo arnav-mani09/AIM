@@ -90,7 +90,7 @@ export default function ClipDetailPage({ params }: { params: { clipId: string } 
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-6 px-6 py-10">
-      <Link href="/dashboard" className="text-sm text-subtext hover:text-[#0e1a2e]">
+      <Link href="/dashboard" className="text-sm text-subtext hover:text-ink">
         ← Back to dashboard
       </Link>
       {error ? (
@@ -98,7 +98,7 @@ export default function ClipDetailPage({ params }: { params: { clipId: string } 
       ) : clip ? (
         <section className="section-card space-y-4">
           <div>
-            <h1 className="text-3xl font-semibold text-[#0e1a2e]">{clip.title}</h1>
+            <h1 className="text-3xl font-semibold text-ink">{clip.title}</h1>
             <p className="text-sm text-subtext">
               Published {formatLocalDateTime(clip.uploaded_at)}
             </p>
@@ -124,7 +124,7 @@ export default function ClipDetailPage({ params }: { params: { clipId: string } 
               <p className="text-xs uppercase tracking-[0.3em] text-subtext">Stats summary</p>
               {clip.stats_summary ? (
                 <>
-                  <p className="mt-2 text-lg font-semibold text-[#0e1a2e]">
+                  <p className="mt-2 text-lg font-semibold text-ink">
                     {clip.stats_summary.total_possessions} linked possessions
                   </p>
                   {clip.stats_summary.players.length > 0 ? (
@@ -132,7 +132,7 @@ export default function ClipDetailPage({ params }: { params: { clipId: string } 
                       {clip.stats_summary.players.map((player) => (
                         <li key={player.player} className="flex items-center justify-between gap-2">
                           <span>{player.player}</span>
-                          <span className="font-semibold text-[#0e1a2e]">{player.touches} touches</span>
+                          <span className="font-semibold text-ink">{player.touches} touches</span>
                         </li>
                       ))}
                     </ul>
@@ -155,7 +155,7 @@ export default function ClipDetailPage({ params }: { params: { clipId: string } 
                     const endDisplay = formatTimestamp(possession.end_second) ?? "??";
                     return (
                       <li key={possession.possession_id} className="rounded-xl border border-dashed border-stroke p-3">
-                        <p className="font-semibold text-[#0e1a2e]">{possession.label}</p>
+                        <p className="font-semibold text-ink">{possession.label}</p>
                         <p className="text-xs text-subtext">
                           {startDisplay} – {endDisplay}
                         </p>
