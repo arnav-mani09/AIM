@@ -21,6 +21,52 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   );
 }
 
+function NavLinks({ isTabActive, onNavigate }: { isTabActive: (tab: string) => boolean; onNavigate?: () => void }) {
+  return (
+    <nav className="flex flex-col gap-1">
+      {NAV_ITEMS.map((item) => (
+        <Link
+          key={item.tab}
+          href={`/dashboard?tab=${item.tab}`}
+          onClick={onNavigate}
+          className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
+            isTabActive(item.tab) ? "bg-accent text-white shadow-soft" : "text-subtext hover:bg-tint hover:text-ink"
+          }`}
+        >
+          <span aria-hidden>{item.icon}</span>
+          {item.label}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+function AccountLinks({ onSignOut, onNavigate }: { onSignOut: () => void; onNavigate?: () => void }) {
+  return (
+    <nav className="flex flex-col gap-1 text-sm">
+      <a
+        href="mailto:support@aimsports.com"
+        onClick={onNavigate}
+        className="rounded-xl px-3 py-2 text-subtext transition-colors hover:bg-tint hover:text-ink"
+      >
+        Get help
+      </a>
+      <a href="#" onClick={onNavigate} className="rounded-xl px-3 py-2 text-subtext transition-colors hover:bg-tint hover:text-ink">
+        Privacy & terms
+      </a>
+      <button
+        onClick={() => {
+          onNavigate?.();
+          onSignOut();
+        }}
+        className="mt-1 rounded-xl border border-stroke px-3 py-2 text-left font-semibold text-ink transition-colors hover:bg-tint"
+      >
+        Sign out
+      </button>
+    </nav>
+  );
+}
+
 function DashboardShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -43,48 +89,6 @@ function DashboardShell({ children }: { children: ReactNode }) {
     router.push("/");
   };
 
-  const NavLinks = ({ onNavigate }: { onNavigate?: () => void }) => (
-    <nav className="flex flex-col gap-1">
-      {NAV_ITEMS.map((item) => (
-        <Link
-          key={item.tab}
-          href={`/dashboard?tab=${item.tab}`}
-          onClick={onNavigate}
-          className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
-            isTabActive(item.tab) ? "bg-accent text-white shadow-soft" : "text-subtext hover:bg-tint hover:text-ink"
-          }`}
-        >
-          <span aria-hidden>{item.icon}</span>
-          {item.label}
-        </Link>
-      ))}
-    </nav>
-  );
-
-  const AccountLinks = ({ onNavigate }: { onNavigate?: () => void }) => (
-    <nav className="flex flex-col gap-1 text-sm">
-      <a
-        href="mailto:support@aimsports.com"
-        onClick={onNavigate}
-        className="rounded-xl px-3 py-2 text-subtext transition-colors hover:bg-tint hover:text-ink"
-      >
-        Get help
-      </a>
-      <a href="#" onClick={onNavigate} className="rounded-xl px-3 py-2 text-subtext transition-colors hover:bg-tint hover:text-ink">
-        Privacy & terms
-      </a>
-      <button
-        onClick={() => {
-          onNavigate?.();
-          handleSignOut();
-        }}
-        className="mt-1 rounded-xl border border-stroke px-3 py-2 text-left font-semibold text-ink transition-colors hover:bg-tint"
-      >
-        Sign out
-      </button>
-    </nav>
-  );
-
   return (
     <div className="flex min-h-screen bg-background">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-stroke bg-white px-4 py-6 md:flex">
@@ -97,11 +101,11 @@ function DashboardShell({ children }: { children: ReactNode }) {
         <div className="mt-8 flex-1">
           <p className="label-text px-3">Workspace</p>
           <div className="mt-2">
-            <NavLinks />
+            <NavLinks isTabActive={isTabActive} />
           </div>
         </div>
         <div className="border-t border-stroke pt-4">
-          <AccountLinks />
+          <AccountLinks onSignOut={handleSignOut} />
         </div>
       </aside>
 
@@ -146,11 +150,11 @@ function DashboardShell({ children }: { children: ReactNode }) {
             <div>
               <p className="label-text">Workspace</p>
               <div className="mt-2">
-                <NavLinks onNavigate={() => setMobileNavOpen(false)} />
+                <NavLinks isTabActive={isTabActive} onNavigate={() => setMobileNavOpen(false)} />
               </div>
             </div>
             <div className="mt-auto border-t border-stroke pt-4">
-              <AccountLinks onNavigate={() => setMobileNavOpen(false)} />
+              <AccountLinks onSignOut={handleSignOut} onNavigate={() => setMobileNavOpen(false)} />
             </div>
           </aside>
         </div>

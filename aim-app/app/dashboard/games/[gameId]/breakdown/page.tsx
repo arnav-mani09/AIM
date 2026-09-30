@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import {
@@ -48,7 +48,8 @@ const THREE_POINT_ZONES = new Set<ShotZone>([
   "top_of_key_three",
 ]);
 
-export default function GameBreakdownPage({ params }: { params: Params }) {
+export default function GameBreakdownPage() {
+  const params = useParams<Params>();
   const router = useRouter();
   const searchParams = useSearchParams();
   const teamId = searchParams.get("team");

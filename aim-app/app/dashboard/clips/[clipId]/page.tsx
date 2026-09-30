@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import { ClipRecord, fetchClip, fetchClipPlaybackUrl } from "@/lib/teamApi";
 import { formatLocalDateTime } from "@/lib/dateTime";
 
-export default function ClipDetailPage({ params }: { params: { clipId: string } }) {
+export default function ClipDetailPage() {
+  const params = useParams<{ clipId: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
   const teamId = searchParams.get("team");

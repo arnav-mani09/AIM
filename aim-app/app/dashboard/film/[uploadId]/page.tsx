@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import {
@@ -20,7 +20,8 @@ type Params = {
   uploadId: string;
 };
 
-export default function FilmEditorPage({ params }: { params: Params }) {
+export default function FilmEditorPage() {
+  const params = useParams<Params>();
   const router = useRouter();
   const searchParams = useSearchParams();
   const teamId = searchParams.get("team");
