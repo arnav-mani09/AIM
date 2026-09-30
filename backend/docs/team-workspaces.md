@@ -22,10 +22,17 @@ These steps let us demonstrate team onboarding immediately while we continue bui
 
 ## Raw film uploads
 
-- `POST /api/v1/teams/{teamId}/film` – multipart upload endpoint for full-game or quarter footage. Stores files under `media_root/raw` and records metadata in the `game_upload` table.
-- `GET /api/v1/teams/{teamId}/film` – lists all raw uploads for a team so the UI can display processing status before clips are generated.
-- `GET /api/v1/teams/{teamId}/film/{uploadId}` – fetch metadata for a specific upload when loading the clip editor view.
-- Frontend dashboard now includes a "Full game film" card wired to these routes; next step is a processing worker that turns each `game_upload` into possession timelines and enables clip-trimming from the raw source.
+Film is stored in Cloudflare R2 (bucket `aim-film`, see `app/services/storage.py`) and referenced in the database as `r2://aim-film/<key>`. The browser uploads straight to R2 in 64 MB parts (`aim-app/lib/filmUpload.ts`); the file never passes through FastAPI.
+
+- `POST /api/v1/teams/{teamId}/film/uploads` – start an upload `{ title, notes?, game_id?, filename, content_type, size_bytes }` (MP4/MOV, up to 5 GB). Creates the `game_upload` row with status `uploading` and returns `{ upload, part_size, part_count }`.
+- `POST /api/v1/teams/{teamId}/film/{uploadId}/upload/sign` – `{ part_numbers }` → a signed R2 PUT link per part (valid 1 hour; the client signs each part right before sending it).
+- `GET /api/v1/teams/{teamId}/film/{uploadId}/upload/parts` – parts R2 already has, so an interrupted upload resumes where it stopped.
+- `POST /api/v1/teams/{teamId}/film/{uploadId}/upload/complete` – checks R2's parts against the expected size, finishes the upload, sets status `processing` and starts processing.
+- `DELETE /api/v1/teams/{teamId}/film/{uploadId}/upload` – cancel an in-progress upload.
+- `GET /api/v1/teams/{teamId}/film/{uploadId}/playback` – signed R2 link (valid 12 hours) the `<video>` element loads directly; supports seeking. Clips have the same at `/clips/{clipId}/playback`.
+- `GET /api/v1/teams/{teamId}/film` and `GET .../film/{uploadId}` – list and fetch uploads.
+
+The R2 bucket's CORS rules must list every frontend origin that uploads (currently `http://localhost:3000`).
 
 ### Segment / clip workflow
 

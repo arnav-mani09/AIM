@@ -9,3 +9,7 @@ __pycache__/
 *.pyc
 supabase/.temp/
 *.tsbuildinfo
+
+# large sample film
+backend/sample_data/*.mp4
+backend/sample_data/*.mov

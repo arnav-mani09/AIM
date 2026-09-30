@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -14,6 +14,9 @@ class GameUpload(Base):
     game_id = Column(Integer, ForeignKey("game.id"), nullable=True)
     title = Column(String, nullable=False)
     storage_url = Column(String, nullable=False)
+    # Expected size and the R2 multipart upload id, set while status == "uploading".
+    size_bytes = Column(BigInteger, nullable=True)
+    storage_upload_id = Column(String, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="pending")

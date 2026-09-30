@@ -1,6 +1,5 @@
 import math
 import subprocess
-from pathlib import Path
 from typing import List
 
 import httpx
@@ -9,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.film_segment import FilmSegment
 from app.models.game_upload import GameUpload
+from app.services import storage
 
 
 class FilmProcessingService:
@@ -31,7 +31,7 @@ class FilmProcessingService:
         self.db.commit()
 
         status = "ready"
-        duration = self._probe_duration(Path(upload.storage_url))
+        duration = self._probe_duration(upload.storage_url)
         try:
             if duration is not None:
                 upload.duration_seconds = int(duration)
@@ -102,32 +102,39 @@ class FilmProcessingService:
             )
         return normalized
 
-    def _probe_duration(self, path: Path) -> float | None:
-        """Use ffprobe if available to detect duration of the uploaded video."""
-        if not path.exists():
+    def _probe_duration(self, storage_url: str) -> float | None:
+        """Read the video duration with ffprobe, straight from R2 via a signed link.
+
+        Returns None when ffprobe is missing or the file can't be read; the
+        Modal proxy step replaces this in Phase 0.
+        """
+        key = storage.key_from_storage_url(storage_url)
+        if not key:
             return None
         try:
+            source = storage.presign_download(key, ttl_seconds=15 * 60)
             result = subprocess.run(
                 [
                     "ffprobe",
                     "-v",
                     "error",
-                    "-select_streams",
-                    "v:0",
                     "-show_entries",
                     "format=duration",
                     "-of",
                     "default=noprint_wrappers=1:nokey=1",
-                    str(path),
+                    source,
                 ],
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=120,
             )
             return float(result.stdout.strip())
         except FileNotFoundError:
-            return path.stat().st_size / 4_000_000 if path.stat().st_size else None
-        except (subprocess.SubprocessError, ValueError):
+            print("[FILM] ffprobe is not installed; duration unknown")
+            return None
+        except (subprocess.SubprocessError, ValueError) as exc:
+            print(f"[FILM] ffprobe failed: {exc}")
             return None
 
     def _suggest_segments(self, duration: float) -> List[dict]:

@@ -70,11 +70,22 @@ export type GameUploadRecord = {
   status: string;
   storage_url: string;
   uploaded_at: string;
+  size_bytes?: number | null;
   duration_seconds?: number | null;
   game_id?: number | null;
   game_matchup?: string | null;
   game_scheduled_at?: string | null;
 };
+
+export type FilmUploadStarted = {
+  upload: GameUploadRecord;
+  part_size: number;
+  part_count: number;
+};
+
+export type SignedPart = { part_number: number; url: string };
+export type UploadedPart = { part_number: number; size: number };
+export type PlaybackUrl = { url: string; expires_in: number };
 
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
@@ -180,21 +191,63 @@ export async function fetchClip(token: string, teamId: number, clipId: number): 
   return response.json();
 }
 
-export async function uploadGameFilm(
+export function startFilmUpload(
   token: string,
   teamId: number,
-  formData: FormData
-): Promise<GameUploadRecord> {
-  const response = await fetch(`${baseUrl}/api/v1/teams/${teamId}/film`, {
+  payload: {
+    title: string;
+    notes?: string | null;
+    game_id?: number | null;
+    filename: string;
+    content_type: string;
+    size_bytes: number;
+  }
+): Promise<FilmUploadStarted> {
+  return request<FilmUploadStarted>(`/api/v1/teams/${teamId}/film/uploads`, token, {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function signFilmUploadParts(
+  token: string,
+  teamId: number,
+  uploadId: number,
+  partNumbers: number[]
+): Promise<SignedPart[]> {
+  return request<SignedPart[]>(`/api/v1/teams/${teamId}/film/${uploadId}/upload/sign`, token, {
+    method: "POST",
+    body: JSON.stringify({ part_numbers: partNumbers }),
+  });
+}
+
+export function listFilmUploadParts(token: string, teamId: number, uploadId: number): Promise<UploadedPart[]> {
+  return request<UploadedPart[]>(`/api/v1/teams/${teamId}/film/${uploadId}/upload/parts`, token);
+}
+
+export function completeFilmUpload(token: string, teamId: number, uploadId: number): Promise<GameUploadRecord> {
+  return request<GameUploadRecord>(`/api/v1/teams/${teamId}/film/${uploadId}/upload/complete`, token, {
+    method: "POST",
+  });
+}
+
+export async function abortFilmUpload(token: string, teamId: number, uploadId: number): Promise<void> {
+  const response = await fetch(`${baseUrl}/api/v1/teams/${teamId}/film/${uploadId}/upload`, {
+    method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
-    body: formData,
   });
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}));
-    throw new Error(detail.detail ?? "Failed to upload film");
+    throw new Error(detail.detail ?? "Failed to cancel upload");
   }
-  return response.json();
+}
+
+export function fetchFilmPlaybackUrl(token: string, teamId: number, uploadId: number): Promise<PlaybackUrl> {
+  return request<PlaybackUrl>(`/api/v1/teams/${teamId}/film/${uploadId}/playback`, token);
+}
+
+export function fetchClipPlaybackUrl(token: string, teamId: number, clipId: number): Promise<PlaybackUrl> {
+  return request<PlaybackUrl>(`/api/v1/teams/${teamId}/clips/${clipId}/playback`, token);
 }
 
 export async function fetchGameFilm(token: string, teamId: number): Promise<GameUploadRecord[]> {

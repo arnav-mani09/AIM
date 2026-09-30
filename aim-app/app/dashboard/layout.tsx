@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useState } from "react";
+import { ReactNode, Suspense, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -12,7 +12,16 @@ const NAV_ITEMS = [
   { tab: "teams", label: "Team Spaces", icon: "👥" },
 ] as const;
 
+// useSearchParams needs a Suspense boundary for the dashboard to prerender.
 export default function DashboardLayout({ children }: { children: ReactNode }) {
+  return (
+    <Suspense>
+      <DashboardShell>{children}</DashboardShell>
+    </Suspense>
+  );
+}
+
+function DashboardShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();

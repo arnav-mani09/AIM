@@ -1,11 +1,20 @@
 'use client';
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "http://127.0.0.1:8000";
 
+// useSearchParams needs a Suspense boundary for the page to prerender.
 export default function VerifyPage() {
+  return (
+    <Suspense>
+      <Verify />
+    </Suspense>
+  );
+}
+
+function Verify() {
   const params = useSearchParams();
   const router = useRouter();
   const token = params.get("token");

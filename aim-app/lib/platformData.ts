@@ -27,12 +27,8 @@ export async function getMockPlatformData(): Promise<PlatformData> {
   };
 }
 
+// Read the data directly: fetching our own /api/data route over HTTP fails
+// during `next build`, when no server is running yet.
 export async function getPlatformData(): Promise<PlatformData> {
-  const origin = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
-  const target = new URL("/api/data", origin);
-  const res = await fetch(target);
-  if (!res.ok) {
-    throw new Error("Failed to load platform data");
-  }
-  return res.json();
+  return getMockPlatformData();
 }

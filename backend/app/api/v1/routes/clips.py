@@ -1,23 +1,20 @@
 from pathlib import Path
 from uuid import uuid4
-import mimetypes
-import os
-import shutil
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api import deps
-from app.core.config import get_settings
 from app.models.clip import Clip
 from app.schemas.clip import ClipRead
+from app.schemas.game_upload import PlaybackUrl
+from app.services import storage
 from app.services.clip_stats import hydrate_clip_stats
 
 router = APIRouter(prefix="/teams/{team_id}/clips", tags=["clips"])
-settings = get_settings()
-media_root = Path(settings.media_root)
-media_root.mkdir(parents=True, exist_ok=True)
+
+ALLOWED_CLIP_TYPES = {"video/mp4", "video/quicktime"}
 
 
 def _get_clip(db: Session, team_id: int, clip_id: int) -> Clip:
@@ -31,12 +28,20 @@ def _get_clip(db: Session, team_id: int, clip_id: int) -> Clip:
     return clip
 
 
-def _store_upload(file: UploadFile) -> str:
-    suffix = Path(file.filename).suffix
-    destination = media_root / f"{uuid4().hex}{suffix}"
-    with destination.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    return str(destination)
+def _storage_error(exc: Exception) -> HTTPException:
+    print(f"[CLIPS] Storage error: {exc}")
+    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Clip storage is unavailable, try again")
+
+
+def _store_upload(team_id: int, file: UploadFile) -> str:
+    if file.content_type not in ALLOWED_CLIP_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Clip must be an MP4 or MOV video")
+    key = f"teams/{team_id}/clips/{uuid4().hex}{Path(file.filename or '').suffix.lower()}"
+    try:
+        storage.put_object(key, file.file, file.content_type)
+    except (BotoCoreError, ClientError, storage.StorageNotConfigured) as exc:
+        raise _storage_error(exc) from exc
+    return storage.to_storage_url(key)
 
 
 @router.get("", response_model=list[ClipRead])
@@ -79,7 +84,7 @@ async def upload_team_clip(
     current_user=Depends(deps.get_current_user),
     _membership=Depends(deps.require_team_membership),
 ):
-    storage_path = _store_upload(file)
+    storage_path = _store_upload(team_id, file)
     clip = Clip(
         title=title,
         notes=notes,
@@ -110,31 +115,32 @@ def delete_team_clip(
     # Clips that originate from a game upload share the same file as the raw film.
     # In that case we only remove the database record so the base film continues
     # to exist for other clips.
-    should_remove_file = clip.source_upload_id is None
-    try:
-        if should_remove_file and clip.storage_url and os.path.exists(clip.storage_url):
-            os.remove(clip.storage_url)
-    except OSError:
-        pass
+    key = storage.key_from_storage_url(clip.storage_url)
+    if clip.source_upload_id is None and key:
+        try:
+            storage.delete_object(key)
+        except (BotoCoreError, ClientError) as exc:
+            raise _storage_error(exc) from exc
     db.delete(clip)
     db.commit()
     return None
 
 
-@router.get("/{clip_id}/stream")
-def stream_clip(
+@router.get("/{clip_id}/playback", response_model=PlaybackUrl)
+def get_clip_playback_url(
     team_id: int,
     clip_id: int,
     db: Session = Depends(deps.get_db_session),
     _membership=Depends(deps.require_team_membership),
 ):
+    """Signed link to the clip's video. Clips cut from game film point at the
+    full film; the player seeks to source_start_second."""
     clip = _get_clip(db, team_id, clip_id)
-    file_path = Path(clip.storage_url)
-    if not file_path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip file not found")
-    content_type, _ = mimetypes.guess_type(str(file_path))
-    return FileResponse(
-        str(file_path),
-        media_type=content_type or "video/mp4",
-        filename=file_path.name,
-    )
+    key = storage.key_from_storage_url(clip.storage_url)
+    if not key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip video not found")
+    try:
+        url = storage.presign_download(key)
+    except (BotoCoreError, ClientError, storage.StorageNotConfigured) as exc:
+        raise _storage_error(exc) from exc
+    return PlaybackUrl(url=url, expires_in=storage.PLAYBACK_URL_TTL_SECONDS)

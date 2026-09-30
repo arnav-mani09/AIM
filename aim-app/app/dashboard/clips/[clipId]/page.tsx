@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { ClipRecord, fetchClip } from "@/lib/teamApi";
+import { ClipRecord, fetchClip, fetchClipPlaybackUrl } from "@/lib/teamApi";
 import { formatLocalDateTime } from "@/lib/dateTime";
 
 export default function ClipDetailPage({ params }: { params: { clipId: string } }) {
@@ -47,7 +47,17 @@ export default function ClipDetailPage({ params }: { params: { clipId: string } 
       setVideoUrl(null);
       return;
     }
-    setVideoUrl(`/api/clip-stream?team=${teamId}&clip=${clipId}&token=${token}`);
+    let cancelled = false;
+    fetchClipPlaybackUrl(token, Number(teamId), clipId)
+      .then(({ url }) => {
+        if (!cancelled) setVideoUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setVideoUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token, teamId, clipId]);
 
   const clipStart = clip?.source_start_second ?? 0;

@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     aws_secret_access_key: str | None = None
     aws_region: str | None = None
     media_root: str = "storage/uploads"
+    r2_account_id: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket: str = "aim-film"
 
     class Config:
         env_file = ".env"

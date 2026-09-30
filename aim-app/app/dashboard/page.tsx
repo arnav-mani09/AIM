@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
@@ -20,11 +20,23 @@ import {
   joinTeam,
   TeamInvite,
   TeamMembership,
-  uploadGameFilm,
+  abortFilmUpload,
 } from "@/lib/teamApi";
 import { formatLocalDateTime } from "@/lib/dateTime";
+import { FilmUploadError, FilmUploadSession, uploadFilm } from "@/lib/filmUpload";
 
+const formatGigabytes = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+
+// useSearchParams needs a Suspense boundary for the page to prerender.
 export default function DashboardPage() {
+  return (
+    <Suspense>
+      <Dashboard />
+    </Suspense>
+  );
+}
+
+function Dashboard() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = (searchParams.get("tab") as "film" | "games" | "chat" | "teams" | null) ?? "film";
@@ -49,6 +61,16 @@ export default function DashboardPage() {
   const [filmError, setFilmError] = useState<string | null>(null);
   const [filmStatus, setFilmStatus] = useState<"idle" | "loading" | "error" | "success">("idle");
   const [filmFeedback, setFilmFeedback] = useState("");
+  const [filmProgress, setFilmProgress] = useState<{ uploaded: number; total: number } | null>(null);
+  // Kept after a failed or paused upload so Resume only sends the missing parts.
+  const [pendingFilm, setPendingFilm] = useState<{
+    file: File;
+    title: string;
+    notes: string | null;
+    teamId: number;
+    session: FilmUploadSession | null;
+  } | null>(null);
+  const filmAbortRef = useRef<AbortController | null>(null);
   const [gamesList, setGamesList] = useState<GameRecord[]>([]);
   const [gamesLoading, setGamesLoading] = useState(false);
   const [gamesError, setGamesError] = useState<string | null>(null);
@@ -146,6 +168,54 @@ export default function DashboardPage() {
     [teams]
   );
 
+  useEffect(() => {
+    if (filmStatus !== "loading") return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [filmStatus]);
+
+  const runFilmUpload = async (job: NonNullable<typeof pendingFilm>): Promise<boolean> => {
+    if (!authToken) return false;
+    const controller = new AbortController();
+    filmAbortRef.current = controller;
+    setPendingFilm(job);
+    setFilmStatus("loading");
+    setFilmFeedback("");
+    try {
+      const upload = await uploadFilm({
+        token: authToken,
+        teamId: job.teamId,
+        file: job.file,
+        title: job.title,
+        notes: job.notes,
+        resume: job.session,
+        signal: controller.signal,
+        onSession: (session) => setPendingFilm((prev) => (prev ? { ...prev, session } : prev)),
+        onProgress: (uploaded, total) => setFilmProgress({ uploaded, total }),
+      });
+      setFilmList((prev) => [upload, ...prev.filter((item) => item.id !== upload.id)]);
+      setPendingFilm(null);
+      setFilmProgress(null);
+      setFilmStatus("success");
+      setFilmFeedback("Film uploaded. Processing has started.");
+      return true;
+    } catch (error) {
+      const session = error instanceof FilmUploadError ? error.session : null;
+      setPendingFilm((prev) => (prev ? { ...prev, session: session ?? prev.session } : prev));
+      setFilmStatus("error");
+      setFilmFeedback(
+        `${error instanceof Error ? error.message : "Upload failed"} Resume to continue from where it stopped.`
+      );
+      return false;
+    } finally {
+      filmAbortRef.current = null;
+    }
+  };
+
   const handleFilmUpload = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!authToken || filmTeamId === "") {
@@ -162,18 +232,30 @@ export default function DashboardPage() {
       setFilmFeedback("Pick a file to upload.");
       return;
     }
-    setFilmStatus("loading");
+    setFilmProgress({ uploaded: 0, total: file.size });
+    const uploaded = await runFilmUpload({
+      file,
+      title: String(formData.get("title") ?? ""),
+      notes: (formData.get("notes") as string | null) || null,
+      teamId: filmTeamId,
+      session: null,
+    });
+    if (uploaded && formElement.isConnected) formElement.reset();
+  };
+
+  const handlePauseFilmUpload = () => filmAbortRef.current?.abort();
+
+  const handleCancelFilmUpload = async () => {
+    const job = pendingFilm;
+    setPendingFilm(null);
+    setFilmProgress(null);
+    setFilmStatus("idle");
     setFilmFeedback("");
-    try {
-      const upload = await uploadGameFilm(authToken, filmTeamId, formData);
-      setFilmList((prev) => [upload, ...prev]);
-      setFilmStatus("success");
-      setFilmFeedback("Raw film uploaded. Processing queue will begin soon.");
-    } catch (error) {
-      setFilmStatus("error");
-      setFilmFeedback(error instanceof Error ? error.message : "Upload failed");
-    } finally {
-      formElement.reset();
+    if (authToken && job?.session) {
+      await abortFilmUpload(authToken, job.teamId, job.session.uploadId).catch(() => {
+        /* the server cleans up abandoned uploads when the film is deleted */
+      });
+      setFilmList((prev) => prev.filter((item) => item.id !== job.session?.uploadId));
     }
   };
 
@@ -336,16 +418,64 @@ export default function DashboardPage() {
                 <button
                   type="submit"
                   className="rounded-2xl bg-ink px-4 py-2 font-semibold text-white disabled:opacity-60"
-                  disabled={filmStatus === "loading"}
+                  disabled={filmStatus === "loading" || pendingFilm !== null}
                 >
                   {filmStatus === "loading" ? "Uploading…" : "Upload raw film"}
                 </button>
+                {filmStatus === "loading" && (
+                  <button
+                    type="button"
+                    onClick={handlePauseFilmUpload}
+                    className="rounded-2xl border border-stroke px-4 py-2 font-semibold text-ink"
+                  >
+                    Pause
+                  </button>
+                )}
+                {filmStatus !== "loading" && pendingFilm && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => runFilmUpload(pendingFilm)}
+                      className="rounded-2xl bg-ink px-4 py-2 font-semibold text-white"
+                    >
+                      Resume upload
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCancelFilmUpload}
+                      className="rounded-2xl border border-stroke px-4 py-2 font-semibold text-ink"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                )}
                 {filmFeedback && (
                   <p className={`text-sm ${filmStatus === "error" ? "text-red-500" : "text-green-600"}`}>
                     {filmFeedback}
                   </p>
                 )}
               </div>
+              {filmProgress && (
+                <div className="md:col-span-2 space-y-1">
+                  <div
+                    className="h-2 w-full overflow-hidden rounded-full bg-stroke"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.floor((filmProgress.uploaded / filmProgress.total) * 100)}
+                  >
+                    <div
+                      className="h-full bg-ink transition-[width]"
+                      style={{ width: `${(filmProgress.uploaded / filmProgress.total) * 100}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-subtext">
+                    {Math.floor((filmProgress.uploaded / filmProgress.total) * 100)}% ·{" "}
+                    {formatGigabytes(filmProgress.uploaded)} of {formatGigabytes(filmProgress.total)}
+                    {pendingFilm ? ` · ${pendingFilm.file.name}` : ""}
+                  </p>
+                </div>
+              )}
             </form>
 
             <div className="mt-6 rounded-2xl border border-stroke p-4">

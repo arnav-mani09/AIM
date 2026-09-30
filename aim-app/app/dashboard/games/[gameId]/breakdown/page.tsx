@@ -18,6 +18,7 @@ import {
   fetchPossessions,
   fetchShotChart,
   updatePossession,
+  fetchFilmPlaybackUrl,
 } from "@/lib/teamApi";
 import { formatLocalDateTime } from "@/lib/dateTime";
 import { CourtDiagram } from "@/components/CourtDiagram";
@@ -221,10 +222,25 @@ export default function GameBreakdownPage({ params }: { params: Params }) {
     }
   };
 
-  const videoUrl =
-    token && teamId && game?.primary_upload_id
-      ? `/api/film-stream?team=${teamId}&upload=${game.primary_upload_id}&token=${token}`
-      : null;
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const primaryUploadId = game?.primary_upload_id ?? null;
+  useEffect(() => {
+    if (!token || !teamId || !primaryUploadId) {
+      setVideoUrl(null);
+      return;
+    }
+    let cancelled = false;
+    fetchFilmPlaybackUrl(token, Number(teamId), primaryUploadId)
+      .then(({ url }) => {
+        if (!cancelled) setVideoUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setVideoUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, teamId, primaryUploadId]);
 
   if (!teamId) return null;
 

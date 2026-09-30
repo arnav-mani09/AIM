@@ -12,6 +12,7 @@ import {
   FilmSegment,
   GameUploadRecord,
   publishFilmSegment,
+  fetchFilmPlaybackUrl,
 } from "@/lib/teamApi";
 import { formatLocalDateTime } from "@/lib/dateTime";
 
@@ -108,18 +109,24 @@ export default function FilmEditorPage({ params }: { params: Params }) {
       });
   }, [token, teamId, upload?.status, uploadId]);
 
+  const playable = upload != null && upload.status !== "uploading";
   useEffect(() => {
-    if (!token || !teamId) {
+    if (!token || !teamId || !playable) {
       setVideoUrl(null);
       return;
     }
-    const qs = new URLSearchParams({
-      team: teamId,
-      upload: String(uploadId),
-      token,
-    });
-    setVideoUrl(`/api/film-stream?${qs.toString()}`);
-  }, [token, teamId, uploadId]);
+    let cancelled = false;
+    fetchFilmPlaybackUrl(token, Number(teamId), uploadId)
+      .then(({ url }) => {
+        if (!cancelled) setVideoUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setVideoUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, teamId, uploadId, playable]);
 
   const durationMinutes = useMemo(() => {
     if (!upload?.duration_seconds) return null;
