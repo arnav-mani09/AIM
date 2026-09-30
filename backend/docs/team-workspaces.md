@@ -32,7 +32,7 @@ Film is stored in Cloudflare R2 (bucket `aim-film`, see `app/services/storage.py
 - `GET /api/v1/teams/{teamId}/film/{uploadId}/playback` – signed R2 link (valid 12 hours) the `<video>` element loads directly; supports seeking. Clips have the same at `/clips/{clipId}/playback`.
 - `GET /api/v1/teams/{teamId}/film` and `GET .../film/{uploadId}` – list and fetch uploads.
 
-The R2 bucket's CORS rules must list every frontend origin that uploads (currently `http://localhost:3000`).
+The R2 bucket's CORS rules must list every frontend origin that uploads (currently `http://localhost:3000` and `https://aim-app-seven.vercel.app`).
 
 ### Processing (Modal worker)
 
