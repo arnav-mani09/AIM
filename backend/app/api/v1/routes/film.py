@@ -72,9 +72,18 @@ def _storage_error(exc: Exception) -> HTTPException:
 def _process_upload_async(upload_id: int) -> None:
     db = SessionLocal()
     try:
-        FilmProcessingService(db).process_upload(upload_id)
+        FilmProcessingService(db).start(upload_id)
     finally:
         db.close()
+
+
+def _refresh_processing(db: Session, uploads: list[GameUpload]) -> None:
+    """Pick up finished worker jobs so the page sees them on its next poll."""
+    service = FilmProcessingService(db)
+    for upload in uploads:
+        if upload.status == "processing" and upload.processing_job_id:
+            service.refresh(upload.id)
+            db.refresh(upload)
 
 
 @router.get("", response_model=list[GameUploadRead])
@@ -89,6 +98,7 @@ def list_game_uploads(
         .order_by(GameUpload.uploaded_at.desc())
         .all()
     )
+    _refresh_processing(db, uploads)
     return uploads
 
 
@@ -100,6 +110,7 @@ def get_game_upload(
     _membership=Depends(deps.require_team_membership),
 ):
     upload = _get_upload(db, team_id, upload_id)
+    _refresh_processing(db, [upload])
     return upload
 
 
@@ -249,14 +260,15 @@ def delete_game_film(
     for clip in linked_clips:
         db.delete(clip)
     key = storage.key_from_storage_url(upload.storage_url)
-    if key:
-        try:
-            if upload.storage_upload_id:
-                storage.abort_multipart_upload(key, upload.storage_upload_id)
-            else:
-                storage.delete_object(key)
-        except (BotoCoreError, ClientError) as exc:
-            raise _storage_error(exc) from exc
+    derived = [storage.key_from_storage_url(u) for u in (upload.proxy_url, upload.thumbnail_url)]
+    try:
+        if key and upload.storage_upload_id:
+            storage.abort_multipart_upload(key, upload.storage_upload_id)
+        for object_key in [key, *derived]:
+            if object_key and not upload.storage_upload_id:
+                storage.delete_object(object_key)
+    except (BotoCoreError, ClientError) as exc:
+        raise _storage_error(exc) from exc
     db.delete(upload)
     db.commit()
     return None
@@ -269,9 +281,10 @@ def get_film_playback_url(
     db: Session = Depends(deps.get_db_session),
     _membership=Depends(deps.require_team_membership),
 ):
-    """A short-lived signed link the <video> element can load directly from R2."""
+    """A short-lived signed link the <video> element can load directly from R2.
+    Plays the 720p proxy once the worker has made it, the original until then."""
     upload = _get_upload(db, team_id, upload_id)
-    key = storage.key_from_storage_url(upload.storage_url)
+    key = storage.key_from_storage_url(upload.proxy_url) or storage.key_from_storage_url(upload.storage_url)
     if not key or upload.status == "uploading":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Film is not available for playback")
     try:

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     r2_access_key_id: str | None = None
     r2_secret_access_key: str | None = None
     r2_bucket: str = "aim-film"
+    # Modal reads its own credentials (~/.modal.toml locally, MODAL_TOKEN_ID /
+    # MODAL_TOKEN_SECRET on Render).
+    modal_film_app: str = "aim-film"
 
     class Config:
         env_file = ".env"

@@ -34,6 +34,14 @@ Film is stored in Cloudflare R2 (bucket `aim-film`, see `app/services/storage.py
 
 The R2 bucket's CORS rules must list every frontend origin that uploads (currently `http://localhost:3000`).
 
+### Processing (Modal worker)
+
+When an upload completes, the backend starts `make_proxy` in the Modal app `aim-film` (`worker/film_worker.py`). It downloads the original from R2, writes a 720p H.264 proxy (`<key>.proxy-720p.mp4`, keyframe every 2 s) and a thumbnail (`<key>.thumb.jpg`) next to it, and returns the exact duration. The backend stores the job id in `game_upload.processing_job_id` and collects the result on page polls and every 20 s in a background thread (`app.main`), then sets `proxy_url`, `thumbnail_url`, `duration_seconds`, creates segments, and marks the upload `ready`. Playback serves the proxy once it exists. If Modal can't be reached, the upload falls back to ffprobe-only processing with no proxy.
+
+- Deploy the worker: `backend/.venv/bin/modal deploy worker/film_worker.py`
+- The worker reads R2 credentials from the Modal secret `aim-r2`.
+- The backend authenticates to Modal with `~/.modal.toml` locally, or `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` env vars on Render.
+
 ### Segment / clip workflow
 
 - `GET /api/v1/teams/{teamId}/film/{uploadId}/segments` – retrieve auto-detected or coach-created segments for that game upload.

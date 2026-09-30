@@ -17,6 +17,11 @@ class GameUpload(Base):
     # Expected size and the R2 multipart upload id, set while status == "uploading".
     size_bytes = Column(BigInteger, nullable=True)
     storage_upload_id = Column(String, nullable=True)
+    # 720p playback copy and thumbnail made by the Modal worker, plus its job.
+    proxy_url = Column(String, nullable=True)
+    thumbnail_url = Column(String, nullable=True)
+    processing_job_id = Column(String, nullable=True)
+    processing_error = Column(Text, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="pending")
@@ -26,6 +31,10 @@ class GameUpload(Base):
     uploaded_by = relationship("User")
     game = relationship("Game", back_populates="uploads")
     segments = relationship("FilmSegment", back_populates="upload", cascade="all, delete-orphan")
+
+    @property
+    def has_proxy(self) -> bool:
+        return self.proxy_url is not None
 
     @property
     def game_matchup(self) -> str | None:

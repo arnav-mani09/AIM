@@ -11,6 +11,8 @@ class GameUploadRead(BaseModel):
   storage_url: str
   uploaded_at: datetime
   size_bytes: int | None = None
+  has_proxy: bool = False
+  processing_error: str | None = None
   duration_seconds: int | None = None
   game_id: int | None = None
   game_matchup: str | None = None

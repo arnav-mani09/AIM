@@ -71,6 +71,8 @@ export type GameUploadRecord = {
   storage_url: string;
   uploaded_at: string;
   size_bytes?: number | null;
+  has_proxy?: boolean;
+  processing_error?: string | null;
   duration_seconds?: number | null;
   game_id?: number | null;
   game_matchup?: string | null;

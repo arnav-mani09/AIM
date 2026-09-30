@@ -82,7 +82,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
 
   useEffect(() => {
     if (!token || !teamId || !upload) return;
-    if (upload.status === "ready") return;
+    if (upload.status === "ready" || upload.status === "error") return;
     const interval = setInterval(() => {
       fetchGameUpload(token, Number(teamId), uploadId)
         .then(async (data) => {
@@ -110,6 +110,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
   }, [token, teamId, upload?.status, uploadId]);
 
   const playable = upload != null && upload.status !== "uploading";
+  const hasProxy = upload?.has_proxy ?? false;
   useEffect(() => {
     if (!token || !teamId || !playable) {
       setVideoUrl(null);
@@ -126,7 +127,7 @@ export default function FilmEditorPage({ params }: { params: Params }) {
     return () => {
       cancelled = true;
     };
-  }, [token, teamId, uploadId, playable]);
+  }, [token, teamId, uploadId, playable, hasProxy]);
 
   const durationMinutes = useMemo(() => {
     if (!upload?.duration_seconds) return null;
@@ -275,6 +276,9 @@ export default function FilmEditorPage({ params }: { params: Params }) {
             >
               {isReady ? "Processing complete" : isError ? "Processing failed" : "Processing film…"}
             </span>
+            {isError && upload?.processing_error && (
+              <p className="mt-2 text-xs text-red-600">{upload.processing_error}</p>
+            )}
             <p className="mt-4 text-sm text-subtext">
               Once AIM finishes processing, suggested segments will show below. You can also create manual
               segments now by entering start/end points (in seconds).

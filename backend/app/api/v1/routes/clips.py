@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api import deps
 from app.models.clip import Clip
+from app.models.game_upload import GameUpload
 from app.schemas.clip import ClipRead
 from app.schemas.game_upload import PlaybackUrl
 from app.services import storage
@@ -137,6 +138,9 @@ def get_clip_playback_url(
     full film; the player seeks to source_start_second."""
     clip = _get_clip(db, team_id, clip_id)
     key = storage.key_from_storage_url(clip.storage_url)
+    if clip.source_upload_id is not None:
+        source = db.query(GameUpload).filter(GameUpload.id == clip.source_upload_id).first()
+        key = (storage.key_from_storage_url(source.proxy_url) if source else None) or key
     if not key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip video not found")
     try:
