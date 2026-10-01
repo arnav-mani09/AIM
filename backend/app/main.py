@@ -1,3 +1,4 @@
+import os
 import threading
 from contextlib import asynccontextmanager
 
@@ -62,4 +63,5 @@ app.include_router(players.router, prefix=settings.api_v1_prefix)
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    # Render sets RENDER_GIT_COMMIT, so this shows which commit is live.
+    return {"status": "ok", "commit": os.environ.get("RENDER_GIT_COMMIT", "local")[:7]}
