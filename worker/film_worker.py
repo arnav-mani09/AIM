@@ -69,7 +69,7 @@ def _run(cmd: list[str]) -> None:
         raise RuntimeError(f"{cmd[0]} failed: {result.stderr[-2000:]}")
 
 
-@app.function(image=image, secrets=[modal.Secret.from_name("aim-r2")], cpu=8.0, memory=8192, timeout=90 * 60)
+@app.function(image=image, secrets=[modal.Secret.from_name("aim-r2")], cpu=8.0, memory=8192, timeout=40 * 60)
 def make_proxy(source_key: str) -> dict:
     """Make a 720p H.264 playback copy and a thumbnail next to the original in R2."""
     started = time.monotonic()

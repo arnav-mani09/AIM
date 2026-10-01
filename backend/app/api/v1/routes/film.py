@@ -259,6 +259,9 @@ def delete_game_film(
     )
     for clip in linked_clips:
         db.delete(clip)
+    if upload.processing_job_id:
+        # Otherwise the job can finish later and write a proxy nobody owns.
+        FilmProcessingService(db).cancel_job(upload.processing_job_id)
     key = storage.key_from_storage_url(upload.storage_url)
     derived = [storage.key_from_storage_url(u) for u in (upload.proxy_url, upload.thumbnail_url)]
     try:

@@ -22,6 +22,8 @@ class GameUpload(Base):
     thumbnail_url = Column(String, nullable=True)
     processing_job_id = Column(String, nullable=True)
     processing_error = Column(Text, nullable=True)
+    processing_started_at = Column(DateTime, nullable=True)
+    processing_attempts = Column(Integer, nullable=False, default=0, server_default="0")
     duration_seconds = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="pending")

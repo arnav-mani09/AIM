@@ -1,5 +1,6 @@
 import math
 import subprocess
+from datetime import datetime, timedelta
 from typing import List
 
 import httpx
@@ -10,6 +11,13 @@ from app.core.config import get_settings
 from app.models.film_segment import FilmSegment
 from app.models.game_upload import GameUpload
 from app.services import storage
+
+
+# A full game takes ~5 min on the worker. A job that hasn't finished well past
+# that is stuck (Modal once left a job pending with no container running it);
+# cancel it and retry, then give up with a clear error.
+STUCK_AFTER = timedelta(minutes=45)
+MAX_ATTEMPTS = 2
 
 
 class FilmProcessingService:
@@ -40,6 +48,8 @@ class FilmProcessingService:
         upload.status = "processing"
         upload.processing_job_id = call.object_id
         upload.processing_error = None
+        upload.processing_started_at = datetime.utcnow()
+        upload.processing_attempts = (upload.processing_attempts or 0) + 1
         self.db.commit()
 
     def refresh(self, upload_id: int) -> None:
@@ -54,10 +64,15 @@ class FilmProcessingService:
         if not upload:
             self.db.rollback()
             return
+        call = modal.FunctionCall.from_id(upload.processing_job_id)
         try:
-            result = modal.FunctionCall.from_id(upload.processing_job_id).get(timeout=0)
+            result = call.get(timeout=0)
         except TimeoutError:
-            self.db.rollback()
+            started = upload.processing_started_at
+            if started and datetime.utcnow() - started > STUCK_AFTER:
+                self._give_up_or_retry(upload)
+            else:
+                self.db.rollback()
             return
         except Exception as exc:
             print(f"[FILM] Worker failed for upload {upload.id}: {exc}")
@@ -72,6 +87,24 @@ class FilmProcessingService:
         upload.processing_job_id = None
         self._finish(upload, result["duration_seconds"])
         print(f"[FILM] Upload {upload.id} processed: {result.get('timings_seconds')}")
+
+    def cancel_job(self, job_id: str) -> None:
+        try:
+            modal.FunctionCall.from_id(job_id).cancel(terminate_containers=True)
+        except Exception as exc:
+            print(f"[FILM] Could not cancel job {job_id}: {exc}")
+
+    def _give_up_or_retry(self, upload: GameUpload) -> None:
+        print(f"[FILM] Job {upload.processing_job_id} for upload {upload.id} is stuck; cancelling")
+        self.cancel_job(upload.processing_job_id)
+        upload.processing_job_id = None
+        if (upload.processing_attempts or 0) >= MAX_ATTEMPTS:
+            upload.status = "error"
+            upload.processing_error = f"Processing did not finish after {MAX_ATTEMPTS} attempts. Delete and re-upload, or contact support."
+            self.db.commit()
+            return
+        self.db.commit()
+        self.start(upload.id)
 
     def refresh_pending(self) -> None:
         pending = (
