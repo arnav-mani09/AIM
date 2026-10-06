@@ -1,5 +1,7 @@
-from pydantic_settings import BaseSettings
+import os
 from functools import lru_cache
+
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -26,6 +28,7 @@ class Settings(BaseSettings):
     # Modal reads its own credentials (~/.modal.toml locally, MODAL_TOKEN_ID /
     # MODAL_TOKEN_SECRET on Render).
     modal_film_app: str = "aim-film"
+    sentry_dsn: str | None = None
 
     class Config:
         env_file = ".env"
@@ -36,3 +39,8 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def deployment_environment() -> str:
+    """Render sets RENDER=true; anywhere else is local development."""
+    return "production" if os.environ.get("RENDER") else "development"

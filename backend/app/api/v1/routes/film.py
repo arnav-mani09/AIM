@@ -2,6 +2,7 @@ import math
 from pathlib import Path
 from uuid import uuid4
 
+import sentry_sdk
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -66,6 +67,7 @@ def _get_game(db: Session, game_id: int) -> Game:
 
 def _storage_error(exc: Exception) -> HTTPException:
     print(f"[FILM] Storage error: {exc}")
+    sentry_sdk.capture_exception(exc)
     return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Film storage is unavailable, try again")
 
 

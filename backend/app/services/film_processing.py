@@ -5,9 +5,10 @@ from typing import List
 
 import httpx
 import modal
+import sentry_sdk
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
+from app.core.config import deployment_environment, get_settings
 from app.models.film_segment import FilmSegment
 from app.models.game_upload import GameUpload
 from app.services import storage
@@ -40,9 +41,10 @@ class FilmProcessingService:
             return
         try:
             make_proxy = modal.Function.from_name(self.settings.modal_film_app, "make_proxy")
-            call = make_proxy.spawn(key)
+            call = make_proxy.spawn(key, environment=deployment_environment())
         except Exception as exc:  # Modal down or not configured: keep film usable without a proxy.
             print(f"[FILM] Could not start the Modal worker for upload {upload.id}: {exc}")
+            sentry_sdk.capture_exception(exc)
             self.process_without_worker(upload.id)
             return
         upload.status = "processing"
@@ -76,6 +78,7 @@ class FilmProcessingService:
             return
         except Exception as exc:
             print(f"[FILM] Worker failed for upload {upload.id}: {exc}")
+            sentry_sdk.capture_exception(exc)
             upload.status = "error"
             upload.processing_error = str(exc)[:1000] or exc.__class__.__name__
             upload.processing_job_id = None
@@ -93,9 +96,11 @@ class FilmProcessingService:
             modal.FunctionCall.from_id(job_id).cancel(terminate_containers=True)
         except Exception as exc:
             print(f"[FILM] Could not cancel job {job_id}: {exc}")
+            sentry_sdk.capture_exception(exc)
 
     def _give_up_or_retry(self, upload: GameUpload) -> None:
         print(f"[FILM] Job {upload.processing_job_id} for upload {upload.id} is stuck; cancelling")
+        sentry_sdk.capture_message(f"Film job stuck for upload {upload.id} (attempt {upload.processing_attempts})", level="warning")
         self.cancel_job(upload.processing_job_id)
         upload.processing_job_id = None
         if (upload.processing_attempts or 0) >= MAX_ATTEMPTS:

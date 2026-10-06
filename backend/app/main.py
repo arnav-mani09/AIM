@@ -2,15 +2,30 @@ import os
 import threading
 from contextlib import asynccontextmanager
 
+import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.routes import auth, stats, ingestion, teams, clips, film, games, players
-from app.core.config import get_settings
+from app.core.config import deployment_environment, get_settings
 from app.db.session import SessionLocal
 from app.services.film_processing import FilmProcessingService
 
 settings = get_settings()
+
+ENVIRONMENT = deployment_environment()
+
+if settings.sentry_dsn:
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        environment=ENVIRONMENT,
+        release=os.environ.get("RENDER_GIT_COMMIT"),
+        # Keep request headers (login tokens) and IPs out of Sentry; deps.get_current_user
+        # attaches the user's id instead.
+        send_default_pii=False,
+        traces_sample_rate=1.0 if ENVIRONMENT == "development" else 0.1,
+        debug=os.environ.get("SENTRY_DEBUG") == "1",
+    )
 
 FILM_POLL_SECONDS = 20
 
@@ -23,6 +38,7 @@ def _poll_film_jobs(stop: threading.Event) -> None:
             FilmProcessingService(db).refresh_pending()
         except Exception as exc:
             print(f"[FILM] Job poll failed: {exc}")
+            sentry_sdk.capture_exception(exc)
         finally:
             db.close()
 

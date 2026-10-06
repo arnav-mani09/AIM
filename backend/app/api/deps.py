@@ -1,5 +1,6 @@
 from typing import Generator
 
+import sentry_sdk
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -32,6 +33,7 @@ def get_current_user(
     user = db.query(User).filter(User.id == int(token_data.sub)).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    sentry_sdk.set_user({"id": str(user.id)})
     return user
 
 

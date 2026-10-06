@@ -21,7 +21,7 @@ app = modal.App("aim-film")
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("ffmpeg")
-    .pip_install("boto3==1.40.76")
+    .pip_install("boto3==1.40.76", "sentry-sdk==2.71.0")
 )
 
 PROXY_HEIGHT = 720
@@ -69,9 +69,37 @@ def _run(cmd: list[str]) -> None:
         raise RuntimeError(f"{cmd[0]} failed: {result.stderr[-2000:]}")
 
 
-@app.function(image=image, secrets=[modal.Secret.from_name("aim-r2")], cpu=8.0, memory=8192, timeout=40 * 60)
-def make_proxy(source_key: str) -> dict:
+def _init_sentry(environment: str) -> None:
+    import sentry_sdk
+
+    if os.environ.get("SENTRY_DSN"):
+        sentry_sdk.init(dsn=os.environ["SENTRY_DSN"], environment=environment, send_default_pii=False)
+        sentry_sdk.set_tag("component", "film-worker")
+
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_name("aim-r2"), modal.Secret.from_name("aim-sentry")],
+    cpu=8.0,
+    memory=8192,
+    timeout=40 * 60,
+)
+def make_proxy(source_key: str, environment: str = "development") -> dict:
     """Make a 720p H.264 playback copy and a thumbnail next to the original in R2."""
+    import sentry_sdk
+
+    _init_sentry(environment)
+    sentry_sdk.set_tag("source_key", source_key)
+    try:
+        return _make_proxy(source_key)
+    except Exception as exc:
+        # Report here as well as to the backend: the worker's traceback has the ffmpeg detail.
+        sentry_sdk.capture_exception(exc)
+        sentry_sdk.flush(timeout=5)
+        raise
+
+
+def _make_proxy(source_key: str) -> dict:
     started = time.monotonic()
     bucket = os.environ["R2_BUCKET"]
     r2 = _r2()
@@ -118,5 +146,5 @@ def make_proxy(source_key: str) -> dict:
 
 
 @app.local_entrypoint()
-def main(source_key: str):
-    print(json.dumps(make_proxy.remote(source_key), indent=2))
+def main(source_key: str, environment: str = "development"):
+    print(json.dumps(make_proxy.remote(source_key, environment=environment), indent=2))
