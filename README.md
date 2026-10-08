@@ -7,7 +7,7 @@ Basketball film analysis for high school coaching staffs: coaches upload game fi
 | Piece | Where | Deploys |
 | --- | --- | --- |
 | Frontend (`aim-app/`, Next.js 16) | Vercel, https://aim-app-seven.vercel.app | Automatically on every push to `main` |
-| Backend (`backend/`, FastAPI) | Render, https://aim-8tt1.onrender.com | On push to `main` (auto-deploy) |
+| Backend (`backend/`, FastAPI) | Render, https://aim-8tt1.onrender.com | On push to `main` that changes `backend/` |
 | Film worker (`worker/film_worker.py`) | Modal app `aim-film` | `backend/.venv/bin/modal deploy worker/film_worker.py` |
 | Database | Supabase Postgres | `cd backend && PYTHONPATH=. .venv/bin/alembic upgrade head` |
 | Film storage | Cloudflare R2 bucket `aim-film` | — |
