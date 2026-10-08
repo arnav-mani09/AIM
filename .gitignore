@@ -19,3 +19,5 @@ backend/sample_data/*.mov
 # ML training data (frames, labels, weights) stays out of git
 ml/data/
 ml/runs/
+ml/.venv*/
+ml/.labelstudio.env
