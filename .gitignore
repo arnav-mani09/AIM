@@ -15,3 +15,7 @@ backend/sample_data/*.mp4
 backend/sample_data/*.mov
 .vercel
 .env*.local
+
+# ML training data (frames, labels, weights) stays out of git
+ml/data/
+ml/runs/

@@ -1,0 +1,8 @@
+# Detection classes for AIM's basketball detector, in YOLO format.
+# Label files are one .txt per image: "<class id> <cx> <cy> <w> <h>", all normalized to 0-1.
+# Class ids are fixed: never reorder or remove, only append.
+names:
+  0: ball
+  1: player
+  2: referee
+  3: rim
