@@ -2,31 +2,181 @@
   "_comment": "AIM deadlines, mirrored from the AIM December Ship Plan doc. Edit here, then run: python3 planning/sync_flux.py. Each id is permanent (it links the Flux task); change titles, dates and priorities freely. Priority: high = on the critical path to the Dec 10 launch; medium = needed for launch but not blocking; low = nice to have or cleanup.",
   "plan_url": "https://claude.ai/code/artifact/67634ae5-b9c1-4cda-a0dc-204065195dc9",
   "deadlines": [
-    {"id": "aim-render-autodeploy", "phase": "Phase 0", "due": "2026-10-15", "priority": "medium", "title": "AIM: confirm Render auto-deploys", "notes": "Next push that changes backend/ should go live on its own; /health shows the commit."},
-
-    {"id": "aim-game2-scorebooks", "phase": "Phase 1", "due": "2026-10-12", "priority": "high", "title": "AIM: get 2nd game film + 1-2 official scorebooks", "notes": "Same sideline camera style. Scorebooks are the answer key for testing the box score."},
-    {"id": "aim-label-first-50", "phase": "Phase 1", "due": "2026-10-16", "priority": "high", "title": "AIM: label first 50 frames in Label Studio", "notes": "localhost:8090, project 'AIM detector'. On-court players + refs, ball, rims. Tell Claude when done for a quality check."},
-    {"id": "aim-label-all", "phase": "Phase 1", "due": "2026-10-24", "priority": "high", "title": "AIM: finish labeling ~800 frames (2 games)", "notes": "Remaining sample-game frames plus frames from game 2."},
-    {"id": "aim-train-detector", "phase": "Phase 1", "due": "2026-10-31", "priority": "high", "title": "AIM: train YOLOX detector + GPU detection on Modal", "notes": "Fine-tune YOLOX (D-FINE as backup); 10 fps detection + ByteTrack tracking in the aim-film Modal app."},
-    {"id": "aim-teams-jerseys", "phase": "Phase 1", "due": "2026-11-04", "priority": "medium", "title": "AIM: split teams by jersey color + read jersey numbers", "notes": "Valley = light blue in the sample film."},
-    {"id": "aim-event-rules", "phase": "Phase 1", "due": "2026-11-06", "priority": "high", "title": "AIM: event rules (shots, makes, 3PT, FT, rebounds, assists, turnovers)", "notes": ""},
-    {"id": "aim-confidence", "phase": "Phase 1", "due": "2026-11-07", "priority": "medium", "title": "AIM: confidence score on every call", "notes": "So the review screen only shows the unsure ones."},
-    {"id": "aim-eval-check", "phase": "Phase 1", "due": "2026-11-08", "priority": "high", "title": "AIM: box score accuracy check vs scorebook", "notes": "Gate: 80% of stats credited to the right player, team totals within 2. Miss -> bigger review queue, keep Dec 10."},
-
-    {"id": "aim-review-screen", "phase": "Phase 2", "due": "2026-11-15", "priority": "high", "title": "AIM: review screen (unsure calls queue + shortcuts)", "notes": "Least confident first; accept, make/miss, change player, reject."},
-    {"id": "aim-real-box-score", "phase": "Phase 2", "due": "2026-11-18", "priority": "medium", "title": "AIM: box score + shot chart from real data", "notes": "Confirmed events become Possession rows; replace mockData.ts."},
-    {"id": "aim-rosters-tagging", "phase": "Phase 2", "due": "2026-11-20", "priority": "medium", "title": "AIM: rosters + tag Valley vs opponent film", "notes": "Opponent players get their own stats."},
-    {"id": "aim-render-paid", "phase": "Phase 2", "due": "2026-11-21", "priority": "medium", "title": "AIM: upgrade Render to a paid instance before beta", "notes": "Free tier sleeps after ~15 min idle (27 s cold start)."},
-    {"id": "aim-filming-guide", "phase": "Phase 2", "due": "2026-11-21", "priority": "low", "title": "AIM: one-page filming guide for beta coaches", "notes": "One sideline camera that follows play."},
-    {"id": "aim-save-fixes", "phase": "Phase 2", "due": "2026-11-22", "priority": "low", "title": "AIM: save every coach fix as training data", "notes": ""},
-
-    {"id": "aim-beta-start", "phase": "Phase 4", "due": "2026-11-23", "priority": "high", "title": "AIM: beta starts with Valley's staff + 1-2 coaches", "notes": "Collect feedback weekly; measure review time per game (target 20 min)."},
-    {"id": "aim-chatbot", "phase": "Phase 3", "due": "2026-11-25", "priority": "high", "title": "AIM: chatbot about any player (Claude)", "notes": "Answers cite the box score and link the clips."},
-    {"id": "aim-chatbot-tests", "phase": "Phase 3", "due": "2026-11-27", "priority": "medium", "title": "AIM: chatbot test questions (95% match box score)", "notes": ""},
-    {"id": "aim-auto-clips", "phase": "Phase 3", "due": "2026-11-28", "priority": "medium", "title": "AIM: auto clip per confirmed event + team sharing", "notes": ""},
-    {"id": "aim-usage-cap", "phase": "Phase 3", "due": "2026-11-29", "priority": "low", "title": "AIM: games-per-month cap per team", "notes": "Limits GPU and chatbot cost."},
-
-    {"id": "aim-feature-freeze", "phase": "Phase 4", "due": "2026-12-04", "priority": "high", "title": "AIM: feature freeze (bug fixes only after this)", "notes": ""},
-    {"id": "aim-launch", "phase": "Phase 4", "due": "2026-12-10", "priority": "high", "title": "AIM: public beta launch", "notes": ""}
+    {
+      "id": "aim-render-autodeploy",
+      "phase": "Phase 0",
+      "due": "2026-10-15",
+      "priority": "medium",
+      "title": "AIM: confirm Render auto-deploys",
+      "notes": "Next push that changes backend/ should go live on its own; /health shows the commit."
+    },
+    {
+      "id": "aim-game2-scorebooks",
+      "phase": "Phase 1",
+      "due": "2026-10-19",
+      "priority": "high",
+      "title": "AIM: follow up with coach on 2nd game film + scorebooks",
+      "notes": "Requested from the coach Oct 15 (was due Oct 12). Same sideline camera style. Scorebooks are the answer key for testing the box score."
+    },
+    {
+      "id": "aim-label-first-50",
+      "phase": "Phase 1",
+      "due": "2026-10-16",
+      "priority": "high",
+      "title": "AIM: label first 50 frames in Label Studio",
+      "notes": "localhost:8090, project 'AIM detector'. On-court players + refs, ball, rims. Tell Claude when done for a quality check."
+    },
+    {
+      "id": "aim-label-all",
+      "phase": "Phase 1",
+      "due": "2026-10-24",
+      "priority": "high",
+      "title": "AIM: finish labeling ~800 frames (2 games)",
+      "notes": "Remaining sample-game frames plus frames from game 2."
+    },
+    {
+      "id": "aim-train-detector",
+      "phase": "Phase 1",
+      "due": "2026-10-31",
+      "priority": "high",
+      "title": "AIM: train YOLOX detector + GPU detection on Modal",
+      "notes": "Fine-tune YOLOX (D-FINE as backup); 10 fps detection + ByteTrack tracking in the aim-film Modal app."
+    },
+    {
+      "id": "aim-teams-jerseys",
+      "phase": "Phase 1",
+      "due": "2026-11-04",
+      "priority": "medium",
+      "title": "AIM: split teams by jersey color + read jersey numbers",
+      "notes": "Valley = light blue in the sample film."
+    },
+    {
+      "id": "aim-event-rules",
+      "phase": "Phase 1",
+      "due": "2026-11-06",
+      "priority": "high",
+      "title": "AIM: event rules (shots, makes, 3PT, FT, rebounds, assists, turnovers)",
+      "notes": ""
+    },
+    {
+      "id": "aim-confidence",
+      "phase": "Phase 1",
+      "due": "2026-11-07",
+      "priority": "medium",
+      "title": "AIM: confidence score on every call",
+      "notes": "So the review screen only shows the unsure ones."
+    },
+    {
+      "id": "aim-eval-check",
+      "phase": "Phase 1",
+      "due": "2026-11-08",
+      "priority": "high",
+      "title": "AIM: box score accuracy check vs scorebook",
+      "notes": "Gate: 80% of stats credited to the right player, team totals within 2. Miss -> bigger review queue, keep Dec 10."
+    },
+    {
+      "id": "aim-review-screen",
+      "phase": "Phase 2",
+      "due": "2026-11-15",
+      "priority": "high",
+      "title": "AIM: review screen (unsure calls queue + shortcuts)",
+      "notes": "Least confident first; accept, make/miss, change player, reject."
+    },
+    {
+      "id": "aim-real-box-score",
+      "phase": "Phase 2",
+      "due": "2026-11-18",
+      "priority": "medium",
+      "title": "AIM: box score + shot chart from real data",
+      "notes": "Confirmed events become Possession rows; replace mockData.ts."
+    },
+    {
+      "id": "aim-rosters-tagging",
+      "phase": "Phase 2",
+      "due": "2026-11-20",
+      "priority": "medium",
+      "title": "AIM: rosters + tag Valley vs opponent film",
+      "notes": "Opponent players get their own stats."
+    },
+    {
+      "id": "aim-render-paid",
+      "phase": "Phase 2",
+      "due": "2026-11-21",
+      "priority": "medium",
+      "title": "AIM: upgrade Render to a paid instance before beta",
+      "notes": "Free tier sleeps after ~15 min idle (27 s cold start)."
+    },
+    {
+      "id": "aim-filming-guide",
+      "phase": "Phase 2",
+      "due": "2026-11-21",
+      "priority": "low",
+      "title": "AIM: one-page filming guide for beta coaches",
+      "notes": "One sideline camera that follows play."
+    },
+    {
+      "id": "aim-save-fixes",
+      "phase": "Phase 2",
+      "due": "2026-11-22",
+      "priority": "low",
+      "title": "AIM: save every coach fix as training data",
+      "notes": ""
+    },
+    {
+      "id": "aim-beta-start",
+      "phase": "Phase 4",
+      "due": "2026-11-23",
+      "priority": "high",
+      "title": "AIM: beta starts with Valley's staff + 1-2 coaches",
+      "notes": "Collect feedback weekly; measure review time per game (target 20 min)."
+    },
+    {
+      "id": "aim-chatbot",
+      "phase": "Phase 3",
+      "due": "2026-11-25",
+      "priority": "high",
+      "title": "AIM: chatbot about any player (Claude)",
+      "notes": "Answers cite the box score and link the clips."
+    },
+    {
+      "id": "aim-chatbot-tests",
+      "phase": "Phase 3",
+      "due": "2026-11-27",
+      "priority": "medium",
+      "title": "AIM: chatbot test questions (95% match box score)",
+      "notes": ""
+    },
+    {
+      "id": "aim-auto-clips",
+      "phase": "Phase 3",
+      "due": "2026-11-28",
+      "priority": "medium",
+      "title": "AIM: auto clip per confirmed event + team sharing",
+      "notes": ""
+    },
+    {
+      "id": "aim-usage-cap",
+      "phase": "Phase 3",
+      "due": "2026-11-29",
+      "priority": "low",
+      "title": "AIM: games-per-month cap per team",
+      "notes": "Limits GPU and chatbot cost."
+    },
+    {
+      "id": "aim-feature-freeze",
+      "phase": "Phase 4",
+      "due": "2026-12-04",
+      "priority": "high",
+      "title": "AIM: feature freeze (bug fixes only after this)",
+      "notes": ""
+    },
+    {
+      "id": "aim-launch",
+      "phase": "Phase 4",
+      "due": "2026-12-10",
+      "priority": "high",
+      "title": "AIM: public beta launch",
+      "notes": ""
+    }
   ]
 }
