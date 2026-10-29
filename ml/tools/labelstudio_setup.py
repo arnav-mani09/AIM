@@ -61,6 +61,7 @@ def main() -> None:
             "description": "Ball, player, referee and rim boxes for AIM's detector (YOLO format export).",
             "label_config": LABEL_CONFIG,
             "show_collab_predictions": True,  # show YOLOX pre-labels as editable boxes
+            "sampling": "Uniform sampling",  # random order: both games, whole game, from the start
         }).json()
         print("created project", project["id"])
     pid = project["id"]
