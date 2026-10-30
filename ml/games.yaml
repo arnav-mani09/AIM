@@ -1,0 +1,17 @@
+# Game film used for training and evaluation. Team sorting reads valley_jersey to
+# label each player Valley or Opponent; everyone not in Valley's colors is Opponent.
+games:
+  - id: ontario-christian-high-school-game-angle-1
+    file: backend/sample_data/@ Ontario Christian High School - Game - Angle 1.mp4
+    minutes: 56.9
+    gym: maroon-and-white walls, "COURT 7"
+    valley_jersey: light blue
+    opponent_jersey: white
+    split: train
+  - id: nolimit-var-vs-drive-angle-1
+    file: backend/sample_data/NoLimit Var vs DRIVE - Angle 1.mp4
+    minutes: 42.5
+    gym: wood-slat walls, US flag, "WILDCATS" floor, scoreboard visible
+    valley_jersey: white
+    opponent_jersey: black
+    split: eval
