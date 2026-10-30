@@ -8,7 +8,8 @@
       "due": "2026-10-15",
       "priority": "medium",
       "title": "AIM: confirm Render auto-deploys",
-      "notes": "Next push that changes backend/ should go live on its own; /health shows the commit."
+      "notes": "Done Oct 29: GitHub Action calls Render's deploy hook on every backend/ push and waits for /health to show the new commit.",
+      "done": true
     },
     {
       "id": "aim-label-first-50",
