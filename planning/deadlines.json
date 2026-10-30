@@ -11,6 +11,15 @@
       "notes": "Next push that changes backend/ should go live on its own; /health shows the commit."
     },
     {
+      "id": "aim-label-first-50",
+      "phase": "Phase 1",
+      "due": "2026-10-28",
+      "priority": "high",
+      "title": "AIM: label first 50 frames in Label Studio",
+      "notes": "Done Oct 29: 80 frames (43 game 1, 37 game 2), quality check passed with small fixes.",
+      "done": true
+    },
+    {
       "id": "aim-game2-scorebooks",
       "phase": "Phase 1",
       "due": "2026-10-30",
@@ -19,20 +28,12 @@
       "notes": "Game 2 (Var vs DRIVE, 42.5 min) arrived Oct 26 and is pre-labeled. Coach is sending more film and the stats sheets this week; stats sheets are the answer key for testing the box score."
     },
     {
-      "id": "aim-label-first-50",
+      "id": "aim-label-first-300",
       "phase": "Phase 1",
-      "due": "2026-10-16",
+      "due": "2026-10-31",
       "priority": "high",
-      "title": "AIM: label first 50 frames in Label Studio",
-      "notes": "localhost:8090, project 'AIM detector'. On-court players + refs, ball, rims. Tell Claude when done for a quality check."
-    },
-    {
-      "id": "aim-label-all",
-      "phase": "Phase 1",
-      "due": "2026-10-24",
-      "priority": "high",
-      "title": "AIM: finish labeling ~800 frames (2 games)",
-      "notes": "Remaining sample-game frames plus frames from game 2."
+      "title": "AIM: label first 300 frames (enough for a first training run)",
+      "notes": "About 3 h at ~45 s/frame. Starts the first YOLOX training run."
     },
     {
       "id": "aim-train-detector",
@@ -40,7 +41,7 @@
       "due": "2026-10-31",
       "priority": "high",
       "title": "AIM: train YOLOX detector + GPU detection on Modal",
-      "notes": "Fine-tune YOLOX (D-FINE as backup); 10 fps detection + ByteTrack tracking in the aim-film Modal app."
+      "notes": "First run on the first 300 frames by Oct 31; retrain on all 800 after Nov 5. Fine-tune YOLOX (D-FINE as backup); 10 fps detection + ByteTrack tracking in the aim-film Modal app."
     },
     {
       "id": "aim-teams-jerseys",
@@ -48,7 +49,15 @@
       "due": "2026-11-04",
       "priority": "medium",
       "title": "AIM: split teams by jersey color + read jersey numbers",
-      "notes": "Valley = light blue in the sample film."
+      "notes": "Per-game colors in ml/games.yaml (Valley light blue in game 1, white in game 2)."
+    },
+    {
+      "id": "aim-label-all",
+      "phase": "Phase 1",
+      "due": "2026-11-05",
+      "priority": "high",
+      "title": "AIM: finish labeling ~800 frames (2 games)",
+      "notes": "Remaining sample-game frames plus frames from game 2."
     },
     {
       "id": "aim-event-rules",
@@ -69,7 +78,7 @@
     {
       "id": "aim-eval-check",
       "phase": "Phase 1",
-      "due": "2026-11-08",
+      "due": "2026-11-12",
       "priority": "high",
       "title": "AIM: box score accuracy check vs scorebook",
       "notes": "Gate: 80% of stats credited to the right player, team totals within 2. Miss -> bigger review queue, keep Dec 10."

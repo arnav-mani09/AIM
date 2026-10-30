@@ -52,6 +52,8 @@ def build(deadline: dict, existing: dict | None, plan_url: str) -> dict:
         "dueDate": deadline["due"],
         "priority": deadline["priority"],
     })
+    if deadline.get("done"):
+        task["done"] = True  # marked done here; a done checkmark set in Flux is also kept
     task.setdefault("done", False)
     task.setdefault("createdAt", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
     return task

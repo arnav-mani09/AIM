@@ -1,0 +1,40 @@
+# Deploys the backend to Render when anything under backend/ changes on main.
+# Uses Render's deploy hook (Render > aim service > Settings > Deploy Hook),
+# stored as the repo secret RENDER_DEPLOY_HOOK. Set it once with:
+#   gh secret set RENDER_DEPLOY_HOOK      (then paste the URL at the prompt)
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+    paths: ["backend/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK secret is not set"; exit 1
+          fi
+          curl -fsS -X POST "$HOOK" > /dev/null
+          echo "Deploy requested for ${GITHUB_SHA::7}"
+
+      - name: Wait for the new commit on /health
+        run: |
+          want="${GITHUB_SHA::7}"
+          for i in $(seq 1 40); do
+            got=$(curl -fsS https://aim-8tt1.onrender.com/health | python3 -c 'import sys,json; print(json.load(sys.stdin).get("commit",""))' || true)
+            echo "live: ${got:-?}  want: $want"
+            [ "$got" = "$want" ] && exit 0
+            sleep 30
+          done
+          echo "::error::Render did not go live with $want within 20 minutes"; exit 1
