@@ -43,7 +43,7 @@
       "due": "2026-10-31",
       "priority": "high",
       "title": "AIM: train YOLOX detector + GPU detection on Modal",
-      "notes": "Nov 3: v2 trained on Modal (game 1 + first half of game 2). On game 2's second half: rims 98%, refs 97%, players 92%, ball 69% recall. Left: detection + ByteTrack as a GPU step in the aim-film app, and retrain on all 800 after labeling."
+      "notes": "Nov 3: v2 trained (rims 98%, refs 97%, players 92%, ball 69% on game 2's second half). detect_players runs a full 57-min game in 10 min on one GPU (branch detection-pipeline). Left: deploy aim-film, Supabase migration 0014, turn on DETECTION_ENABLED, then retrain on all 800."
     },
     {
       "id": "aim-teams-jerseys",
