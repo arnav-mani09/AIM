@@ -43,7 +43,7 @@
       "due": "2026-10-31",
       "priority": "high",
       "title": "AIM: train YOLOX detector + GPU detection on Modal",
-      "notes": "First run on the first 300 frames by Oct 31; retrain on all 800 after Nov 5. Fine-tune YOLOX (D-FINE as backup); 10 fps detection + ByteTrack tracking in the aim-film Modal app."
+      "notes": "Nov 3: v2 trained on Modal (game 1 + first half of game 2). On game 2's second half: rims 98%, refs 97%, players 92%, ball 69% recall. Left: detection + ByteTrack as a GPU step in the aim-film app, and retrain on all 800 after labeling."
     },
     {
       "id": "aim-teams-jerseys",
