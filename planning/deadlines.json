@@ -34,7 +34,8 @@
       "due": "2026-10-31",
       "priority": "high",
       "title": "AIM: label first 300 frames (enough for a first training run)",
-      "notes": "About 3 h at ~45 s/frame. Starts the first YOLOX training run."
+      "notes": "Done Nov 3: 312 usable frames (4 timeout frames left out via ml/exclude_frames.yaml, 3 skipped). Starts the first YOLOX training run.",
+      "done": true
     },
     {
       "id": "aim-train-detector",

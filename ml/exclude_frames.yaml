@@ -1,0 +1,9 @@
+# Label Studio task IDs (1-800) to leave out of training exports.
+# Use this for frames that can't be labeled the normal way, like timeouts
+# where players are in a huddle. A frame saved with no boxes would teach the
+# model that the people in it are background, so these are dropped instead.
+exclude:
+  1: timeout, saved blank
+  170: timeout, saved blank
+  180: timeout huddle, saved blank
+  271: players walking off during a stoppage, saved blank
