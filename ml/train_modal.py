@@ -162,7 +162,27 @@ def main(name: str = "v1", epochs: int = 100, batch: int = 8, fetch_only: bool =
             upload.put_file(str(ML / "data" / "weights" / "yolox_m.pth"), "/yolox_m.pth")
     print(f"uploaded dataset; training {name} for {epochs} epochs", flush=True)
 
-    train.remote(name, epochs, batch)
+    # spawn() runs on Modal on its own; a blocking .remote() call gets cancelled when the
+    # laptop's connection drops, even with --detach. Wait for it, reconnecting after drops.
+    call = train.spawn(name, epochs, batch)
+    print(f"started {call.object_id}", flush=True)
+    import time
+    from grpclib.exceptions import StreamTerminatedError
+
+    drops = 0
+    while True:
+        try:
+            call.get(timeout=60)
+            break
+        except (TimeoutError, modal.exception.TimeoutError):
+            continue
+        except (modal.exception.ConnectionError, StreamTerminatedError, OSError) as exc:
+            drops += 1
+            if drops > 30:
+                raise SystemExit(f"lost Modal {drops} times; finish later with --fetch-only ({exc})")
+            print(f"connection dropped ({exc}); reconnecting", flush=True)
+            time.sleep(30)
+            call = modal.FunctionCall.from_id(call.object_id)
     fetch(name)
 
 
