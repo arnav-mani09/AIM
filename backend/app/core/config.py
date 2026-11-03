@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # Modal reads its own credentials (~/.modal.toml locally, MODAL_TOKEN_ID /
     # MODAL_TOKEN_SECRET on Render).
     modal_film_app: str = "aim-film"
+    # Run player detection after the proxy. Off until detect_players is deployed to aim-film.
+    detection_enabled: bool = False
     sentry_dsn: str | None = None
 
     class Config:

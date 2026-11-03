@@ -1,10 +1,10 @@
 """AIM film worker on Modal: heavy video work that doesn't belong on the web server.
 
 Deploy:  backend/.venv/bin/modal deploy worker/film_worker.py
-Run one: backend/.venv/bin/modal run worker/film_worker.py --source-key teams/1/film/abc.mp4
+Run one: backend/.venv/bin/modal run worker/film_worker.py --source-key teams/1/film/abc.mp4 [--detect]
 
 The backend starts `make_proxy` when an upload completes and polls the call
-for its result. Detection (Phase 1) joins this app as a GPU function.
+for its result, then starts `detect_players` (GPU) the same way.
 """
 
 import json
@@ -145,6 +145,97 @@ def _make_proxy(source_key: str) -> dict:
     }
 
 
+# --- Player detection (GPU) -------------------------------------------------------
+# The detector's weights live in the private "aim-models" volume. To ship a new model:
+#   backend/.venv/bin/modal volume put aim-models ml/runs/<run>/aim_yolox_m.pth /aim_yolox_m_<run>.pth
+# then change MODEL_RUN and redeploy. The tracks file name carries the model, so old
+# results stay readable next to new ones.
+MODEL_RUN = "v2"
+MODEL_VERSION = f"aim-yolox-m-{MODEL_RUN}"
+models = modal.Volume.from_name("aim-models", create_if_missing=True)
+YOLOX_COMMIT = "6ddff4824372906469a7fae2dc3206c7aa4bbaee"  # same YOLOX as training
+gpu_image = (
+    modal.Image.debian_slim(python_version="3.10")
+    .apt_install("ffmpeg", "git", "build-essential", "libgl1", "libglib2.0-0")
+    .pip_install(
+        "torch==2.4.1", "torchvision==0.19.1", "numpy<2", "opencv-python-headless==4.10.0.84",
+        "supervision==0.26.1", "loguru", "tqdm", "pycocotools", "tabulate", "psutil", "thop", "ninja",
+        "boto3==1.40.76", "sentry-sdk==2.71.0",
+    )
+    .run_commands(f"pip install --no-deps --no-build-isolation git+https://github.com/Megvii-BaseDetection/YOLOX.git@{YOLOX_COMMIT}")
+    .add_local_file(Path(__file__).with_name("vision.py"), "/root/vision.py")
+)
+
+
+@app.function(
+    image=gpu_image,
+    gpu=["L4", "A10G", "L40S"],  # whichever is free first; L4 is cheapest
+    secrets=[modal.Secret.from_name("aim-r2"), modal.Secret.from_name("aim-sentry")],
+    volumes={"/models": models},
+    cpu=8.0,
+    memory=16384,
+    timeout=90 * 60,
+)
+def detect_players(source_key: str, environment: str = "development") -> dict:
+    """Detect and track players, refs, the ball and rims through a whole game.
+
+    Writes <stem>.tracks-<model>.json.gz next to the original in R2: every frame at 10 fps
+    with its boxes ([class, x0, y0, x1, y1, score, track_id]), plus per-track jersey color
+    and a two-group color split the backend names Valley/Opponent from the game's colors.
+    """
+    import sentry_sdk
+
+    _init_sentry(environment)
+    sentry_sdk.set_tag("source_key", source_key)
+    try:
+        return _detect_players(source_key)
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        sentry_sdk.flush(timeout=5)
+        raise
+
+
+def _detect_players(source_key: str) -> dict:
+    import gzip
+    import sys
+
+    sys.path.insert(0, "/root")
+    import vision
+
+    started = time.monotonic()
+    bucket = os.environ["R2_BUCKET"]
+    r2 = _r2()
+    tracks_key = f"{source_key.rsplit('.', 1)[0]}.tracks-{MODEL_VERSION}.json.gz"
+    with tempfile.TemporaryDirectory() as tmp:
+        source, out = Path(tmp) / "source", Path(tmp) / "tracks.json.gz"
+        r2.download_file(bucket, source_key, str(source))
+        downloaded = time.monotonic()
+        info = _probe(source)
+        doc = vision.detect_and_track(source, info, Path(f"/models/aim_yolox_m_{MODEL_RUN}.pth"), MODEL_VERSION,
+                                      log=lambda m: print(m, flush=True))
+        detected = time.monotonic()
+        with gzip.open(out, "wt") as f:
+            json.dump(doc, f, separators=(",", ":"))
+        r2.upload_file(str(out), bucket, tracks_key, ExtraArgs={"ContentType": "application/json", "ContentEncoding": "gzip"})
+        size = out.stat().st_size
+
+    groups = [t["group"] for t in doc["tracks"].values()]
+    return {
+        "tracks_key": tracks_key,
+        "model": MODEL_VERSION,
+        "frames": len(doc["frames"]),
+        "tracks": len(doc["tracks"]),
+        "tracks_by_group": {str(g): groups.count(g) for g in (0, 1, "unsure")},
+        "tracks_bytes": size,
+        "timings_seconds": {
+            "download": round(downloaded - started, 1),
+            "detect": round(detected - downloaded, 1),
+            "total": round(time.monotonic() - started, 1),
+        },
+    }
+
+
 @app.local_entrypoint()
-def main(source_key: str, environment: str = "development"):
-    print(json.dumps(make_proxy.remote(source_key, environment=environment), indent=2))
+def main(source_key: str, environment: str = "development", detect: bool = False):
+    fn = detect_players if detect else make_proxy
+    print(json.dumps(fn.remote(source_key, environment=environment), indent=2))

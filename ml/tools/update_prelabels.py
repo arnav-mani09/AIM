@@ -115,6 +115,9 @@ def main() -> None:
         }).raise_for_status()
         if i % 25 == 0:
             print(f"{i}/{len(todo)} frames", flush=True)
+    if not args.dry_run:
+        # Label Studio only shows pre-labels from the project's chosen model version.
+        s.patch(f"{URL}/api/projects/{pid}", json={"model_version": version}).raise_for_status()
     print(f"{'checked' if args.dry_run else 'updated'} {len(todo)} frames, {boxes} boxes, "
           f"{time.monotonic() - started:.0f}s")
 
