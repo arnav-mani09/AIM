@@ -3,6 +3,8 @@
 Run (after ml/tools/export_dataset.py):
     backend/.venv/bin/modal run ml/train_modal.py --name v1
     backend/.venv/bin/modal run ml/train_modal.py --name smoke --epochs 2   # quick check, a few cents
+    backend/.venv/bin/modal run ml/train_modal.py --name v1 --fetch-only    # download a finished run
+Add `--detach` after `modal run` to keep training going if the laptop disconnects.
 
 What it does:
 1. Uploads ml/data/dataset/ and the COCO yolox_m.pth start weights to a private Modal Volume.
@@ -43,7 +45,11 @@ INPUT_SIZE = 960  # the ball is a few pixels wide on sideline film; 640 loses it
 
 EXP_TEMPLATE = '''
 import os
+import torch.multiprocessing
 from yolox.exp import Exp as BaseExp
+
+# Containers block passing tensors between data workers by file descriptor; use files instead.
+torch.multiprocessing.set_sharing_strategy("file_system")
 
 class Exp(BaseExp):
     def __init__(self):
@@ -69,12 +75,15 @@ class Exp(BaseExp):
 '''
 
 
-@app.function(image=image, gpu="L4", volumes={VOL: volume}, timeout=3 * 60 * 60)
+# Any of these works; Modal takes whichever is free first (L4 is cheapest).
+@app.function(image=image, gpu=["L4", "A10G", "L40S"], volumes={VOL: volume}, timeout=3 * 60 * 60)
 def train(name: str, epochs: int, batch: int) -> dict:
     import shutil
     import sys
 
-    data, runs = VOL / "dataset", VOL / "runs"
+    runs = VOL / "runs"
+    data = Path("/tmp/dataset")  # local disk reads faster than the volume on every epoch
+    shutil.copytree(VOL / "dataset", data, dirs_exist_ok=True)
     out = runs / name
     if out.exists():
         shutil.rmtree(out)  # a rerun with the same name starts fresh
@@ -88,12 +97,16 @@ def train(name: str, epochs: int, batch: int) -> dict:
     for line in proc.stdout:
         print(line, end="")
         log.append(line)
-    if proc.wait() != 0:
+    # YOLOX catches its own errors and still exits 0, so check that a model was saved.
+    if proc.wait() != 0 or not (out / "best_ckpt.pth").exists():
         raise RuntimeError("training failed; see the log above")
 
     best = predict_val(out / "best_ckpt.pth", data)
+    # Everything the laptop needs goes in the volume, so a dropped connection loses nothing.
+    (out / "train_log.txt").write_text("".join(log))
+    (out / "val_predictions.json").write_text(json.dumps(best["predictions"], default=float))
+    (out / "summary.json").write_text(json.dumps({"best_ap": best["best_ap"]}, default=float))
     volume.commit()
-    return {"log": "".join(log), **best}
 
 
 def predict_val(ckpt: Path, data: Path) -> dict:
@@ -126,11 +139,13 @@ def predict_val(ckpt: Path, data: Path) -> dict:
             x0, y0, x1, y1 = (v / ratio for v in (x0, y0, x1, y1))
             preds.append({"image_id": im["id"], "category_id": int(cls), "score": obj * cls_conf,
                           "bbox": [x0, y0, x1 - x0, y1 - y0]})
-    return {"predictions": preds, "best_ap": state.get("best_ap")}
+    return {"predictions": preds, "best_ap": float(state.get("best_ap") or 0)}
 
 
 @app.local_entrypoint()
-def main(name: str = "v1", epochs: int = 100, batch: int = 8):
+def main(name: str = "v1", epochs: int = 100, batch: int = 8, fetch_only: bool = False):
+    if fetch_only:  # the run finished but the laptop lost the connection
+        return fetch(name)
     dataset = ML / "data" / "dataset"
     if not (dataset / "annotations" / "instances_train2017.json").exists():
         raise SystemExit("No dataset yet. Run: ml/.venv-labelstudio/bin/python ml/tools/export_dataset.py")
@@ -145,16 +160,20 @@ def main(name: str = "v1", epochs: int = 100, batch: int = 8):
         upload.put_directory(str(dataset), "/dataset")
         if not have_weights:
             upload.put_file(str(ML / "data" / "weights" / "yolox_m.pth"), "/yolox_m.pth")
-    print(f"uploaded dataset; training {name} for {epochs} epochs on an L4")
+    print(f"uploaded dataset; training {name} for {epochs} epochs", flush=True)
 
-    result = train.remote(name, epochs, batch)
+    train.remote(name, epochs, batch)
+    fetch(name)
 
+
+def fetch(name: str) -> None:
+    """Download a finished run from the volume into ml/runs/<name>/."""
     out = ML / "runs" / name
     out.mkdir(parents=True, exist_ok=True)
-    (out / "train_log.txt").write_text(result["log"])
-    (out / "val_predictions.json").write_text(json.dumps(result["predictions"]))
-    with open(out / "aim_yolox_m.pth", "wb") as f:
-        for chunk in volume.read_file(f"runs/{name}/aim_yolox_m.pth"):
-            f.write(chunk)
-    print(f"best COCO AP (0.5:0.95) on game 2: {result['best_ap']}")
+    for file in ("aim_yolox_m.pth", "val_predictions.json", "train_log.txt", "summary.json"):
+        with open(out / file, "wb") as f:
+            for chunk in volume.read_file(f"runs/{name}/{file}"):
+                f.write(chunk)
+    best_ap = json.loads((out / "summary.json").read_text())["best_ap"]
+    print(f"best COCO AP (0.5:0.95) on game 2: {best_ap}")
     print(f"saved to {out}. Next: ml/.venv/bin/python ml/tools/detector_report.py {name}")
