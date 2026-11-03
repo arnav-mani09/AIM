@@ -21,6 +21,7 @@ import numpy as np
 ML = Path(__file__).resolve().parents[1]
 DATA = ML / "data" / "dataset"
 IOU = 0.5
+CEILING_LINE = 0.22  # a rim whose box ends above this share of the frame height is a ceiling hoop
 TARGETS = {"player": 0.95, "rim": 0.95, "referee": 0.90, "ball": 0.70}  # recall targets
 
 
@@ -86,6 +87,15 @@ def main() -> None:
         hit = "yes" if best["recall"] >= TARGETS[name] else "no"
         print(f"{name:8} {best['cutoff']:>6.2f} {best['recall']:>7.0%} {best['precision']:>9.0%} "
               f"{TARGETS[name]:>6.0%} {hit}")
+    # Rims split: retracted ceiling hoops on side courts don't affect stats; main hoops do.
+    heights = {im["id"]: im["height"] for im in coco["images"]}
+    rim = next(c for c, n in names.items() if n == "rim")
+    is_ceiling = lambda b: (b["bbox"][1] + b["bbox"][3]) / heights[b["image_id"]] < CEILING_LINE
+    found, missed, _ = match(labels, preds, rim, cutoffs[rim])
+    for kind, test in (("main hoops", lambda b: not is_ceiling(b)), ("ceiling hoops", is_ceiling)):
+        f, m = sum(map(test, found)), sum(map(test, missed))
+        report[f"rim_{kind.split()[0]}"] = {"recall": f / max(1, f + m), "labels": f + m}
+        print(f"  {kind}: {f}/{f + m} found ({f / max(1, f + m):.0%})")
     (run / "report.json").write_text(json.dumps(report, indent=2))
 
     # Mistake sheets: the 12 test frames with the most misses plus wrong boxes.
