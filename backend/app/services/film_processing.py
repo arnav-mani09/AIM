@@ -19,6 +19,8 @@ from app.services import storage
 # cancel it and retry, then give up with a clear error.
 STUCK_AFTER = timedelta(minutes=45)
 MAX_ATTEMPTS = 2
+# Detection on a 60-minute game should take well under 30 min; the worker's own limit is 90.
+DETECTION_STUCK_AFTER = timedelta(minutes=100)
 
 
 class FilmProcessingService:
@@ -90,6 +92,79 @@ class FilmProcessingService:
         upload.processing_job_id = None
         self._finish(upload, result["duration_seconds"])
         print(f"[FILM] Upload {upload.id} processed: {result.get('timings_seconds')}")
+        self.start_detection(upload.id)
+
+    def start_detection(self, upload_id: int) -> None:
+        """Start player detection on the GPU. The film stays playable whatever happens here."""
+        if not self.settings.detection_enabled:
+            return
+        upload = self.db.query(GameUpload).filter(GameUpload.id == upload_id).first()
+        key = storage.key_from_storage_url(upload.storage_url) if upload else None
+        if not upload or not key:
+            return
+        try:
+            detect = modal.Function.from_name(self.settings.modal_film_app, "detect_players")
+            call = detect.spawn(key, environment=deployment_environment())
+        except Exception as exc:
+            print(f"[DETECT] Could not start detection for upload {upload.id}: {exc}")
+            sentry_sdk.capture_exception(exc)
+            upload.detection_status = "error"
+            upload.detection_error = f"Could not start detection: {exc}"[:1000]
+            self.db.commit()
+            return
+        upload.detection_status = "running"
+        upload.detection_job_id = call.object_id
+        upload.detection_error = None
+        upload.detection_started_at = datetime.utcnow()
+        upload.detection_attempts = (upload.detection_attempts or 0) + 1
+        self.db.commit()
+
+    def refresh_detection(self, upload_id: int) -> None:
+        """Collect a finished detection job, if there is one."""
+        upload = (
+            self.db.query(GameUpload)
+            .filter(GameUpload.id == upload_id, GameUpload.detection_status == "running",
+                    GameUpload.detection_job_id.isnot(None))
+            .with_for_update(skip_locked=True)
+            .first()
+        )
+        if not upload:
+            self.db.rollback()
+            return
+        try:
+            result = modal.FunctionCall.from_id(upload.detection_job_id).get(timeout=0)
+        except TimeoutError:
+            started = upload.detection_started_at
+            if started and datetime.utcnow() - started > DETECTION_STUCK_AFTER:
+                print(f"[DETECT] Job {upload.detection_job_id} for upload {upload.id} is stuck; cancelling")
+                sentry_sdk.capture_message(f"Detection stuck for upload {upload.id}", level="warning")
+                self.cancel_job(upload.detection_job_id)
+                upload.detection_job_id = None
+                if (upload.detection_attempts or 0) >= MAX_ATTEMPTS:
+                    upload.detection_status = "error"
+                    upload.detection_error = f"Detection did not finish after {MAX_ATTEMPTS} attempts."
+                    self.db.commit()
+                    return
+                upload.detection_status = None
+                self.db.commit()
+                self.start_detection(upload.id)
+            else:
+                self.db.rollback()
+            return
+        except Exception as exc:
+            print(f"[DETECT] Detection failed for upload {upload.id}: {exc}")
+            sentry_sdk.capture_exception(exc)
+            upload.detection_status = "error"
+            upload.detection_error = str(exc)[:1000] or exc.__class__.__name__
+            upload.detection_job_id = None
+            self.db.commit()
+            return
+        upload.tracks_url = storage.to_storage_url(result["tracks_key"])
+        upload.detection_model = result["model"]
+        upload.detection_status = "done"
+        upload.detection_job_id = None
+        self.db.commit()
+        print(f"[DETECT] Upload {upload.id}: {result['tracks']} tracks, {result.get('timings_seconds')}")
 
     def cancel_job(self, job_id: str) -> None:
         try:
@@ -119,6 +194,13 @@ class FilmProcessingService:
         )
         for (upload_id,) in pending:
             self.refresh(upload_id)
+        detecting = (
+            self.db.query(GameUpload.id)
+            .filter(GameUpload.detection_status == "running", GameUpload.detection_job_id.isnot(None))
+            .all()
+        )
+        for (upload_id,) in detecting:
+            self.refresh_detection(upload_id)
 
     def process_without_worker(self, upload_id: int) -> None:
         """Fallback when the worker can't run: duration via ffprobe, no proxy."""

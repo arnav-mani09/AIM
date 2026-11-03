@@ -24,6 +24,15 @@ class GameUpload(Base):
     processing_error = Column(Text, nullable=True)
     processing_started_at = Column(DateTime, nullable=True)
     processing_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    # Player detection on the Modal GPU, started after the proxy is ready.
+    # detection_status: None (not started), "running", "done", "error".
+    detection_status = Column(String, nullable=True)
+    detection_job_id = Column(String, nullable=True)
+    detection_error = Column(Text, nullable=True)
+    detection_started_at = Column(DateTime, nullable=True)
+    detection_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    detection_model = Column(String, nullable=True)
+    tracks_url = Column(String, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="pending")
