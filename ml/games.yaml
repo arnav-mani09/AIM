@@ -1,5 +1,6 @@
 # Game film used for training and evaluation. Team sorting reads valley_jersey to
 # label each player Valley or Opponent; everyone not in Valley's colors is Opponent.
+# split: train | eval | mixed (frames before eval_after_seconds train, the rest test).
 games:
   - id: ontario-christian-high-school-game-angle-1
     file: backend/sample_data/@ Ontario Christian High School - Game - Angle 1.mp4
@@ -14,4 +15,7 @@ games:
     gym: wood-slat walls, US flag, "WILDCATS" floor, scoreboard visible
     valley_jersey: white
     opponent_jersey: black
-    split: eval
+    # First half trains, second half tests (v1 trained on game 1 alone missed every
+    # ceiling hoop and boxed the near crowd). The next new game becomes the unseen test.
+    split: mixed
+    eval_after_seconds: 1275

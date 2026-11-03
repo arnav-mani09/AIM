@@ -64,8 +64,10 @@ def main() -> None:
     labels, preds = defaultdict(list), defaultdict(list)
     for a in coco["annotations"]:
         labels[a["image_id"]].append(a)
+    test_ids = {im["id"] for im in coco["images"]}
     for p in json.loads((run / "val_predictions.json").read_text()):
-        preds[p["image_id"]].append(p)
+        if p["image_id"] in test_ids:  # an older run may have scored a bigger test set
+            preds[p["image_id"]].append(p)
 
     report, cutoffs = {}, {}
     print(f"{args.name} on game 2 ({len(coco['images'])} frames), IoU {IOU}")

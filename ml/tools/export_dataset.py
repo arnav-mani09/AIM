@@ -24,10 +24,18 @@ FRAMES = ML / "data" / "frames"
 SPLIT_DIR = {"train": "train2017", "eval": "val2017"}
 
 
+def split_of(game: dict, rel: str) -> str:
+    """train or eval for one frame; "mixed" games split by time (frame names are t<seconds>.jpg)."""
+    if game["split"] != "mixed":
+        return game["split"]
+    seconds = float(Path(rel).stem.lstrip("t"))
+    return "eval" if seconds >= game["eval_after_seconds"] else "train"
+
+
 def main() -> None:
     names = yaml.safe_load((ML / "classes.yaml").read_text())["names"]
     class_id = {name: i for i, name in names.items()}
-    games = {g["id"]: g["split"] for g in yaml.safe_load((ML / "games.yaml").read_text())["games"]}
+    games = {g["id"]: g for g in yaml.safe_load((ML / "games.yaml").read_text())["games"]}
     excluded = set((yaml.safe_load((ML / "exclude_frames.yaml").read_text()) or {}).get("exclude") or {})
 
     s = login()
@@ -55,7 +63,7 @@ def main() -> None:
             continue
         rel = task["data"]["image"].split("?d=frames/", 1)[1]
         game = rel.split("/", 1)[0]
-        split = SPLIT_DIR[games[game]]
+        split = SPLIT_DIR[split_of(games[game], rel)]
         src = FRAMES / rel
         name = rel.replace("/", "__")  # frame names repeat across games
         (OUT / split).mkdir(parents=True, exist_ok=True)
