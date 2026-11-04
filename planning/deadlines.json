@@ -43,7 +43,7 @@
       "due": "2026-10-31",
       "priority": "high",
       "title": "AIM: train YOLOX detector + GPU detection on Modal",
-      "notes": "Nov 3: v2 trained (rims 98%, refs 97%, players 92%, ball 69% on game 2's second half). detect_players runs a full 57-min game in 10 min on one GPU (branch detection-pipeline). Left: deploy aim-film, Supabase migration 0014, turn on DETECTION_ENABLED, then retrain on all 800."
+      "notes": "Nov 3: v2 trained (rims 98%, refs 97%, players 92%, ball 69% on game 2's second half). detect_players runs a full 57-min game in 10 min on one GPU. Deployed to aim-film, migration 0014 applied, DETECTION_ENABLED on in Render. Training v3 on 488 frames. Left: final retrain on all 800."
     },
     {
       "id": "aim-teams-jerseys",
@@ -59,7 +59,7 @@
       "due": "2026-11-05",
       "priority": "high",
       "title": "AIM: finish labeling ~800 frames (2 games)",
-      "notes": "Remaining sample-game frames plus frames from game 2."
+      "notes": "Nov 3: 488 of 800 labeled; v2 pre-labels on the rest. Remaining sample-game frames plus frames from game 2."
     },
     {
       "id": "aim-event-rules",
