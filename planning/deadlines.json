@@ -43,7 +43,7 @@
       "due": "2026-10-31",
       "priority": "high",
       "title": "AIM: train YOLOX detector + GPU detection on Modal",
-      "notes": "Nov 3: v2 trained (rims 98%, refs 97%, players 92%, ball 69% on game 2's second half). detect_players runs a full 57-min game in 10 min on one GPU. Deployed to aim-film, migration 0014 applied, DETECTION_ENABLED on in Render. Training v3 on 488 frames. Left: final retrain on all 800."
+      "notes": "v3 deployed Nov 4 (trained on 488 frames): ball 82%, players 93%, refs 92%, rims 98% on game 2's second half. On the unseen Menlo-Atherton gym (29 frames): ball 88%, players 95%, refs 91%, rims 100%. Left: final retrain (v4) once labeling is done."
     },
     {
       "id": "aim-teams-jerseys",
@@ -51,7 +51,7 @@
       "due": "2026-11-04",
       "priority": "medium",
       "title": "AIM: split teams by jersey color + read jersey numbers",
-      "notes": "Per-game colors in ml/games.yaml (Valley light blue in game 1, white in game 2)."
+      "notes": "Team split by jersey color works (k-means per game). Jersey number reading not started."
     },
     {
       "id": "aim-label-all",
@@ -59,7 +59,7 @@
       "due": "2026-11-05",
       "priority": "high",
       "title": "AIM: finish labeling ~800 frames (2 games)",
-      "notes": "Nov 3: 488 of 800 labeled; v2 pre-labels on the rest. Remaining sample-game frames plus frames from game 2."
+      "notes": "Nov 5: 719 of 860 labeled (34 skipped), 107 left: 42 game 1, 45 game 2, 20 Menlo-Atherton test frames. 6 wrong extra ball boxes removed after a check."
     },
     {
       "id": "aim-event-rules",

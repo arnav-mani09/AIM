@@ -21,3 +21,6 @@ ml/data/
 ml/runs/
 ml/.venv*/
 ml/.labelstudio.env
+
+# Local film copies (large, and they show minors)
+backend/storage/uploads/*.mp4
