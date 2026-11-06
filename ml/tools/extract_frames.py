@@ -2,6 +2,7 @@
 
 Usage:
     backend/.venv/bin/python ml/tools/extract_frames.py VIDEO --count 400
+    backend/.venv/bin/python ml/tools/extract_frames.py VIDEO --count 60 --start 300 --end 5640  # game only
 
 Frames land in ml/data/frames/<video name>/ as JPEGs named by timestamp
 (e.g. t001234.5.jpg), ready to upload to Roboflow. The first and last
@@ -34,10 +35,13 @@ def main() -> None:
     parser.add_argument("video", type=Path)
     parser.add_argument("--count", type=int, default=400)
     parser.add_argument("--skip-seconds", type=float, default=60.0, help="skip this much at the start and end")
+    parser.add_argument("--start", type=float, help="first second of the game (overrides --skip-seconds)")
+    parser.add_argument("--end", type=float, help="last second of the game (overrides --skip-seconds)")
     args = parser.parse_args()
 
     total = duration_seconds(args.video)
-    start, end = args.skip_seconds, total - args.skip_seconds
+    start = args.start if args.start is not None else args.skip_seconds
+    end = args.end if args.end is not None else total - args.skip_seconds
     if end <= start:
         raise SystemExit(f"video is only {total:.0f}s long")
     step = (end - start) / args.count
