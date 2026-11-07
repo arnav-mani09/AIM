@@ -195,5 +195,5 @@ def fetch(name: str) -> None:
             for chunk in volume.read_file(f"runs/{name}/{file}"):
                 f.write(chunk)
     best_ap = json.loads((out / "summary.json").read_text())["best_ap"]
-    print(f"best COCO AP (0.5:0.95) on game 2: {best_ap}")
+    print(f"best COCO AP (0.5:0.95) on the test frames: {best_ap}")
     print(f"saved to {out}. Next: ml/.venv/bin/python ml/tools/detector_report.py {name}")

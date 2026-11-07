@@ -43,7 +43,8 @@
       "due": "2026-10-31",
       "priority": "high",
       "title": "AIM: train YOLOX detector + GPU detection on Modal",
-      "notes": "v3 deployed Nov 4. On the unseen Menlo-Atherton gym (44 frames): ball 85%, players 91%, refs 88%, rims 100%. First real site upload Nov 7: 119-min game, playback copy 12 min, detection 21 min. Training v4 on all 767 frames of games 1 and 2."
+      "notes": "Done Nov 7: v4 deployed, trained on 767 frames of games 1 and 2. On the unseen Menlo-Atherton gym (44 frames): ball 89%, players 92%, refs 92%, rims 100% (v3 was 85/91/88/100). First real site upload Nov 7: 119-min game processed in 33 min. Next: track stitching, jersey numbers.",
+      "done": true
     },
     {
       "id": "aim-teams-jerseys",

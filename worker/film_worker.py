@@ -150,7 +150,7 @@ def _make_proxy(source_key: str) -> dict:
 #   backend/.venv/bin/modal volume put aim-models ml/runs/<run>/aim_yolox_m.pth /aim_yolox_m_<run>.pth
 # then change MODEL_RUN and redeploy. The tracks file name carries the model, so old
 # results stay readable next to new ones.
-MODEL_RUN = "v3"
+MODEL_RUN = "v4"
 MODEL_VERSION = f"aim-yolox-m-{MODEL_RUN}"
 models = modal.Volume.from_name("aim-models", create_if_missing=True)
 YOLOX_COMMIT = "6ddff4824372906469a7fae2dc3206c7aa4bbaee"  # same YOLOX as training
