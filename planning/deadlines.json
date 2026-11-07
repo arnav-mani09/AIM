@@ -43,7 +43,7 @@
       "due": "2026-10-31",
       "priority": "high",
       "title": "AIM: train YOLOX detector + GPU detection on Modal",
-      "notes": "v3 deployed Nov 4 (trained on 488 frames): ball 82%, players 93%, refs 92%, rims 98% on game 2's second half. On the unseen Menlo-Atherton gym (29 frames): ball 88%, players 95%, refs 91%, rims 100%. Left: final retrain (v4) once labeling is done."
+      "notes": "v3 deployed Nov 4. On the unseen Menlo-Atherton gym (44 frames): ball 85%, players 91%, refs 88%, rims 100%. First real site upload Nov 7: 119-min game, playback copy 12 min, detection 21 min. Training v4 on all 767 frames of games 1 and 2."
     },
     {
       "id": "aim-teams-jerseys",
@@ -59,7 +59,8 @@
       "due": "2026-11-05",
       "priority": "high",
       "title": "AIM: finish labeling ~800 frames (2 games)",
-      "notes": "Nov 5: 719 of 860 labeled (34 skipped), 107 left: 42 game 1, 45 game 2, 20 Menlo-Atherton test frames. 6 wrong extra ball boxes removed after a check."
+      "notes": "Done Nov 7: all 860 frames finished, 815 labeled and 45 skipped (timeouts, huddles, warmups). 19 wrong ball boxes removed after checks (mostly shoes). Games 1 and 2 train; Menlo-Atherton (44 frames) is the unseen test.",
+      "done": true
     },
     {
       "id": "aim-event-rules",

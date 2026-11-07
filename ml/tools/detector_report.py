@@ -1,4 +1,4 @@
-"""Score a trained detector on the test frames (game 2) and show its mistakes.
+"""Score a trained detector on the test frames (the test games in ml/games.yaml) and show its mistakes.
 
 Usage (after ml/train_modal.py):
     ml/.venv/bin/python ml/tools/detector_report.py v1
@@ -21,7 +21,9 @@ import numpy as np
 ML = Path(__file__).resolve().parents[1]
 DATA = ML / "data" / "dataset"
 IOU = 0.5
-CEILING_LINE = 0.22  # a rim whose box ends above this share of the frame height is a ceiling hoop
+# A rim whose box ends this far (share of frame height) above the typical labeled rim is a ceiling
+# hoop. Relative, as in shots.py: a high camera puts every game rim near the top of the frame.
+CEILING_GAP = 0.09
 TARGETS = {"player": 0.95, "rim": 0.95, "referee": 0.90, "ball": 0.70}  # recall targets
 
 
@@ -71,7 +73,7 @@ def main() -> None:
             preds[p["image_id"]].append(p)
 
     report, cutoffs = {}, {}
-    print(f"{args.name} on game 2 ({len(coco['images'])} frames), IoU {IOU}")
+    print(f"{args.name} on the test frames ({len(coco['images'])} frames), IoU {IOU}")
     print(f"{'class':8} {'cutoff':>6} {'recall':>7} {'precision':>9} {'target':>7}")
     for cls, name in names.items():
         best = None
@@ -90,7 +92,10 @@ def main() -> None:
     # Rims split: retracted ceiling hoops on side courts don't affect stats; main hoops do.
     heights = {im["id"]: im["height"] for im in coco["images"]}
     rim = next(c for c, n in names.items() if n == "rim")
-    is_ceiling = lambda b: (b["bbox"][1] + b["bbox"][3]) / heights[b["image_id"]] < CEILING_LINE
+    bottom = lambda b: (b["bbox"][1] + b["bbox"][3]) / heights[b["image_id"]]
+    rim_bottoms = sorted(bottom(b) for boxes in labels.values() for b in boxes if b["category_id"] == rim)
+    line = rim_bottoms[len(rim_bottoms) // 2] - CEILING_GAP if rim_bottoms else 0.0
+    is_ceiling = lambda b: bottom(b) < line
     found, missed, _ = match(labels, preds, rim, cutoffs[rim])
     for kind, test in (("main hoops", lambda b: not is_ceiling(b)), ("ceiling hoops", is_ceiling)):
         f, m = sum(map(test, found)), sum(map(test, missed))

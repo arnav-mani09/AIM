@@ -15,10 +15,9 @@ games:
     gym: wood-slat walls, US flag, "WILDCATS" floor, scoreboard visible
     valley_jersey: white
     opponent_jersey: black
-    # First half trains, second half tests (v1 trained on game 1 alone missed every
-    # ceiling hoop and boxed the near crowd). The next new game becomes the unseen test.
-    split: mixed
-    eval_after_seconds: 1275
+    # Through v3 the first half trained and the second half tested (split: mixed,
+    # eval_after_seconds: 1275). From v4 the whole game trains; Menlo-Atherton is the test.
+    split: train
   - id: valley-christian-vs-menlo-atherton-tactical
     file: backend/sample_data/Valley Christian vs Menlo-Atherton - Tactical.mp4
     minutes: 119.1  # game runs about 5:00 to 94:00; the rest is pregame and an empty court

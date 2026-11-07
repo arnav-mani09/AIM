@@ -8,7 +8,7 @@ Add `--detach` after `modal run` to keep training going if the laptop disconnect
 
 What it does:
 1. Uploads ml/data/dataset/ and the COCO yolox_m.pth start weights to a private Modal Volume.
-2. Trains on train2017 (game 1) and scores on val2017 (game 2) every 10 epochs.
+2. Trains on train2017 and scores on val2017 (split by ml/games.yaml) every 10 epochs.
 3. Runs the best checkpoint over val2017 and downloads, into ml/runs/<name>/ (gitignored):
      aim_yolox_m.pth         model weights only, for pre-labels and detection
      val_predictions.json    every box the model found on the test frames
