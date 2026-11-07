@@ -24,3 +24,6 @@ ml/.labelstudio.env
 
 # Local film copies (large, and they show minors)
 backend/storage/uploads/*.mp4
+
+# Research notes stay private until the paper is out
+planning/research/
