@@ -220,7 +220,7 @@ function Dashboard() {
     event.preventDefault();
     if (!authToken || filmTeamId === "") {
       setFilmStatus("error");
-      setFilmFeedback("Select a team.");
+      setFilmFeedback(teams.length === 0 ? "Create a team in the Teams tab first." : "Select a team.");
       return;
     }
     const formElement = event.currentTarget;
@@ -384,6 +384,15 @@ function Dashboard() {
                     </option>
                   ))}
                 </select>
+                {!teamsLoading && teams.length === 0 && (
+                  <span className="text-xs text-subtext">
+                    You&apos;re not on a team yet.{" "}
+                    <Link href="/dashboard?tab=teams" className="underline">
+                      Create one in Teams
+                    </Link>{" "}
+                    first.
+                  </span>
+                )}
               </label>
               <label className="flex flex-col gap-2 text-sm">
                 Film title
