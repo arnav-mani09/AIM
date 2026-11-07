@@ -26,14 +26,24 @@ import json
 import random
 from pathlib import Path
 
-CEILING_LINE = 0.22  # a rim whose box ends above this share of the frame height is a ceiling hoop
+# A rim whose box ends this far (share of frame height) above the game's typical rim is a raised
+# ceiling hoop. Relative, not fixed: a high camera puts every game rim near the top of the frame
+# (Menlo-Atherton's rims sit at 20% of the height, game 1's at 31%).
+CEILING_GAP = 0.09
 SHOT_GAP = 2.0
 MAKE_WINDOW = 1.5
 MIN_BALL, MIN_RIM = 0.2, 0.5
 
 
-def game_rims(boxes, frame_h):
-    rims = [b for b in boxes if b[0] == 3 and b[5] >= MIN_RIM and b[4] / frame_h >= CEILING_LINE]
+def ceiling_line(doc: dict) -> float:
+    """Share of frame height above which a rim counts as a ceiling hoop, from this game's rims."""
+    frame_h = doc["frame_size"][1]
+    ys = sorted(b[4] / frame_h for _, boxes in doc["frames"] for b in boxes if b[0] == 3 and b[5] >= MIN_RIM)
+    return ys[len(ys) // 2] - CEILING_GAP if ys else 0.0
+
+
+def game_rims(boxes, frame_h, line):
+    rims = [b for b in boxes if b[0] == 3 and b[5] >= MIN_RIM and b[4] / frame_h >= line]
     if not rims:
         return []
     widest = max(b[3] - b[1] for b in rims)
@@ -53,11 +63,11 @@ def best_ball(boxes, prev=None):
 
 
 def find_shots(doc: dict) -> list[dict]:
-    frame_h = doc["frame_size"][1]
+    frame_h, line = doc["frame_size"][1], ceiling_line(doc)
     shots, open_shot, last_in_zone, last_ball = [], None, -999.0, None
     for t, boxes in doc["frames"]:
         recent = last_ball[:2] if last_ball and t - last_ball[2] <= 0.5 else None
-        ball, rims = best_ball(boxes, recent), game_rims(boxes, frame_h)
+        ball, rims = best_ball(boxes, recent), game_rims(boxes, frame_h, line)
         if ball is not None:
             bx, by = (ball[1] + ball[3]) / 2, (ball[2] + ball[4]) / 2
             last_ball = (bx, by, t)
