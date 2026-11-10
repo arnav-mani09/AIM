@@ -69,7 +69,7 @@
       "due": "2026-11-06",
       "priority": "high",
       "title": "AIM: event rules (shots, makes, 3PT, FT, rebounds, assists, turnovers)",
-      "notes": ""
+      "notes": "Nov 10: first check vs Hudl box scores (Mitty, Riordan). Shot attempts: 141 vs 118 true and 148 vs 141. Makes: 74% of true in both games. Next: split shots by team, free throws vs field goals, and fix missed makes."
     },
     {
       "id": "aim-confidence",
