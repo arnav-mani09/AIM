@@ -26,7 +26,7 @@
       "due": "2026-10-30",
       "priority": "high",
       "title": "AIM: get stats sheets for both games + more film",
-      "notes": "Game 2 (Var vs DRIVE, 42.5 min) arrived Oct 26 and is pre-labeled. Coach is sending more film and the stats sheets this week; stats sheets are the answer key for testing the box score."
+      "notes": "Nov 9: Hudl box scores for 3 new games (vs San Marin W 61-39, vs Riordan L 41-61, vs Mitty L 36-66), transcribed and checked in ml/data/stats (local only). Film for these 3 coming. Still need: San Marin's full player table, and a Hudl export for per-player rebounds/assists/steals/turnovers."
     },
     {
       "id": "aim-label-first-300",
