@@ -26,3 +26,21 @@ games:
     opponent_jersey: maroon
     # Unseen gym and camera: test only. Never train on it, so it stays a fair check.
     split: eval
+  - id: valley-vs-archbishop-mitty
+    file: backend/sample_data/Valley Christian vs Archbishop Mitty CCS - Tactical.mp4
+    minutes: 105.1
+    game_window: [235, 5000]  # seconds into the file: tip-off to final buzzer (read off the scoreboard)
+    gym: Archbishop Mitty, "AM" center logo, black paint, high center camera that pans, scoreboard overlay bottom left
+    valley_jersey: light blue
+    opponent_jersey: white
+    box_score: ml/data/stats/2026-27-hudl-box-scores.yaml  # Hudl, final 36-66
+    split: eval
+  - id: valley-vs-archbishop-riordan
+    file: backend/sample_data/Valley Christian vs Archbishop Riordan - Tactical.mp4
+    minutes: 99.3
+    game_window: [615, 5600]
+    gym: Archbishop Riordan, purple "R" center logo, purple paint, high center camera that pans, scoreboard overlay bottom left
+    valley_jersey: light blue
+    opponent_jersey: white
+    box_score: ml/data/stats/2026-27-hudl-box-scores.yaml  # Hudl, final 41-61
+    split: eval

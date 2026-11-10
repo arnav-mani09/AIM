@@ -161,11 +161,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("tracks", type=Path)
     parser.add_argument("--video", type=Path)
+    parser.add_argument("--window", type=float, nargs=2, metavar=("START", "END"),
+                        help="only count shots between these seconds (tip-off and final buzzer)")
     args = parser.parse_args()
     doc = json.loads(args.tracks.read_text())
     shots = find_shots(doc)
+    start, end = args.window or (0.0, doc["frames"][-1][0])
+    shots = [s for s in shots if start <= s["t"] <= end]
     made = [s for s in shots if s["made"]]
-    minutes = doc["frames"][-1][0] / 60
+    minutes = (end - start) / 60
     print(f"{len(shots)} attempts, {len(made)} makes over {minutes:.0f} min "
           f"({len(shots) / minutes:.1f} attempts/min, {len(made) / max(1, len(shots)):.0%} made)")
     out = args.tracks.with_suffix(".shots.json")
