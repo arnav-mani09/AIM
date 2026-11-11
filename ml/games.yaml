@@ -20,7 +20,8 @@ games:
     split: train
   - id: valley-christian-vs-menlo-atherton-tactical
     file: backend/sample_data/Valley Christian vs Menlo-Atherton - Tactical.mp4
-    minutes: 119.1  # game runs about 5:00 to 94:00; the rest is pregame and an empty court
+    minutes: 119.1
+    game_window: [396, 5518]  # read off the scoreboard (clock 8:00 to 0.0); the rest is pregame and an empty court
     gym: Valley Christian home gym, center "VA" logo, navy paint, high center camera that pans, scoreboard overlay bottom left
     valley_jersey: white
     opponent_jersey: maroon
