@@ -52,7 +52,7 @@
       "due": "2026-11-04",
       "priority": "medium",
       "title": "AIM: split teams by jersey color + read jersey numbers",
-      "notes": "Team split by jersey color works (k-means per game). Jersey number reading not started."
+      "notes": "Nov 11: team split done. Jersey numbers: reader plus per-game model cover about 57% of player screen time; shots go to the right opponent number about 2 in 3 times. Roster (Nov 13) will tighten it."
     },
     {
       "id": "aim-label-all",
@@ -69,7 +69,7 @@
       "due": "2026-11-06",
       "priority": "high",
       "title": "AIM: event rules (shots, makes, 3PT, FT, rebounds, assists, turnovers)",
-      "notes": "Nov 10: first check vs Hudl box scores (Mitty, Riordan). Shot attempts: 141 vs 118 true and 148 vs 141. Makes: 74% of true in both games. Next: split shots by team, free throws vs field goals, and fix missed makes."
+      "notes": "Nov 11: shots, makes, 3s and free throws live and close to Hudl (points within 1 to 8 of the final score on 2 games). Rebounds, turnovers, steals, assists: first version done, second version running."
     },
     {
       "id": "aim-confidence",
@@ -77,7 +77,8 @@
       "due": "2026-11-07",
       "priority": "medium",
       "title": "AIM: confidence score on every call",
-      "notes": "So the review screen only shows the unsure ones."
+      "notes": "Done Nov 11: every drafted shot has one confidence (weakest of attempt, make, team, free throw, 2 vs 3); live on the site.",
+      "done": true
     },
     {
       "id": "aim-eval-check",
@@ -93,7 +94,8 @@
       "due": "2026-11-15",
       "priority": "high",
       "title": "AIM: review screen (unsure calls queue + shortcuts)",
-      "notes": "Least confident first; accept, make/miss, change player, reject."
+      "notes": "Done Nov 11: review screen live (unsure shots first, one-click fixes, keyboard shortcuts, live box score, Find shots button).",
+      "done": true
     },
     {
       "id": "aim-real-box-score",
@@ -125,7 +127,8 @@
       "due": "2026-11-21",
       "priority": "low",
       "title": "AIM: one-page filming guide for beta coaches",
-      "notes": "One sideline camera that follows play."
+      "notes": "Done Nov 11: one-page guide drafted as a Claude Doc (https://claude.ai/artifact/FPHeaHu1bsE1fTu2S2UE2B). High camera at half court, whole game in one file, upload steps, checklist.",
+      "done": true
     },
     {
       "id": "aim-save-fixes",
@@ -133,7 +136,8 @@
       "due": "2026-11-22",
       "priority": "low",
       "title": "AIM: save every coach fix as training data",
-      "notes": ""
+      "notes": "Done Nov 11: every shot keeps the model's original call next to the coach's fix (shot_event.original), ready for retraining.",
+      "done": true
     },
     {
       "id": "aim-beta-start",
