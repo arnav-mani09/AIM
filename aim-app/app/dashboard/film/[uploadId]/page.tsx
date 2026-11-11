@@ -280,6 +280,14 @@ export default function FilmEditorPage() {
             {isError && upload?.processing_error && (
               <p className="mt-2 text-xs text-red-600">{upload.processing_error}</p>
             )}
+            {isReady && (
+              <Link
+                href={`/dashboard/film/${uploadId}/review?team=${teamId}`}
+                className="mt-4 flex w-fit rounded-2xl bg-accent px-5 py-3 text-lg font-semibold text-white"
+              >
+                Review shots →
+              </Link>
+            )}
             <p className="mt-4 text-sm text-subtext">
               Once AIM finishes processing, suggested segments will show below. You can also create manual
               segments now by entering start/end points (in seconds).
