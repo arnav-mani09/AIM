@@ -11,8 +11,8 @@ totals next to the Hudl box score when the game has one.
 How it decides:
 - Team. A team only ever shoots at the basket it attacks, and the teams swap baskets at halftime.
   So the team comes from the basket (left or right of the frame center, since the camera pans
-  but never past a baseline) and the half (halftime is the longest gap between attempts in the
-  middle of the game). Which team attacks which basket comes from a vote: for each shot, the
+  but never past a baseline) and the half (halftime from game_window.py's <tracks>.window.json
+  when it exists, else the longest gap between attempts in the middle of the game). Which team attacks which basket comes from a vote: for each shot, the
   player holding the ball just before it's in the air is the shooter, and his track's jersey
   group votes. One vote per shot is noisy (the ball is often hidden in a crowd); the whole
   game's vote is not. Overtime keeps the second-half baskets.
@@ -21,11 +21,16 @@ How it decides:
   shot, after removing camera pans, measured in body heights per second. Live play is around
   0.3 to 0.7; a free throw is under 0.1. Between 0.1 and 0.15 the hand check (Nov 10) found
   mostly live play (a jump shot, scrambles under the rim) and one real free throw, so the
-  cutoff stays at 0.1. A pair partner (another still attempt at the same basket within 25 s)
-  is saved as ft_pair but doesn't change the call: a putback right after a free throw has one.
+  cutoff stays at 0.1, except next to a clear free throw at the same basket (within 30 s),
+  where up to 0.15 counts: that's the other free throw of the pair (Mitty 29:42, 0.133).
+- Fouled miss (kind "fouled", not a field goal attempt): a missed shot followed within 40 s
+  by a pair of free throws at the same basket, with nothing in between and the game stopped
+  right after it. A shooter fouled on a miss gets free throws and no FGA. A single free throw
+  after it means an and-one, so that shot stays (it was a make the make rule missed).
 - Not game shots, left out of the totals:
-  - "warmup": during halftime warmups both teams shoot several balls at once. Any attempt
-    where the 30 s around it averages 1.8 or more balls per frame. Live play stays under 1.5.
+  - "warmup": anything inside halftime (from the .window.json). As a backup, and before or
+    after the game, any attempt where the 30 s around it averages 1.8 or more balls per frame
+    (several balls at once). Live play stays under 1.5.
   - "dead_ball": during quarter breaks and timeouts, people (kids, staff) shoot around with
     the players at the benches. Any attempt with fewer than 5 players on screen (median over
     the 4 s before). Live play always had 7 or more in both test games.
@@ -46,6 +51,10 @@ MOTION_BEFORE = (4.0, 0.5)  # look from 4 s to 0.5 s before the ball reaches the
 SHOOTER_LOOKBACK = 2.0
 WARMUP_BALLS = 1.8  # average balls per frame over 30 s that means a warmup, not a game
 MIN_PLAYERS = 5     # fewer players on screen than this before a shot means a dead ball
+PAIR_GAP = 30       # seconds between the two free throws of a pair
+STILL_PAIRED = 0.15 # looser stillness for an attempt next to a clear free throw
+FOULED_GAP = 40     # a missed shot this close before free throws at its basket was fouled
+DEAD_AFTER = 0.40   # players' movement in the 10 s after a fouled shot (live play is higher)
 
 
 def frame_at(doc, t):
@@ -146,12 +155,17 @@ def jersey_groups(doc, game):
     return {0: "Valley", 1: "Opponent"} if keep else {0: "Opponent", 1: "Valley"}
 
 
-def split(doc, shots, game, window):
+def split(doc, shots, game, window, half_break=None):
+    """half_break: the halftime range from game_window.py (seconds), when there is one. Attempts
+    inside it are warmups, and the halves split at its middle. Without it, the warmup rule and
+    the longest gap between attempts are used."""
     start, end = window
     shots = [s for s in shots if start <= s["t"] <= end]
     dropped = []
     for s in shots:
-        if balls_per_frame(doc, s["t"]) >= WARMUP_BALLS:
+        if half_break and half_break[0] <= s["t"] <= half_break[1]:
+            s["kind"] = "warmup"
+        elif balls_per_frame(doc, s["t"]) >= WARMUP_BALLS:
             s["kind"] = "warmup"
         elif players_on_screen(doc, s["t"]) < MIN_PLAYERS:
             s["kind"] = "dead_ball"
@@ -160,7 +174,7 @@ def split(doc, shots, game, window):
         dropped.append(s)
     shots = [s for s in shots if s not in dropped]
     times = [s["t"] for s in shots]
-    half_t = halftime(times, start, end)
+    half_t = (half_break[0] + half_break[1]) / 2 if half_break else halftime(times, start, end)
     names = jersey_groups(doc, game)
     tracks = doc["tracks"]
 
@@ -174,13 +188,33 @@ def split(doc, shots, game, window):
         s["shooter_track"] = tid
         s["shooter_jersey"] = names.get(group, "unsure") if group in (0, 1) else "unsure"
 
-    # Free throws: still players. ft_pair is kept for the review screen, not used in the call.
+    # Free throws: still players. ft_pair is kept for the review screen.
+    is_still = lambda o, cut: o["stillness"] is not None and o["stillness"] < cut
     for i, s in enumerate(shots):
-        still = s["stillness"] is not None and s["stillness"] < STILL
-        partner = any(j != i and o["basket"] == s["basket"] and abs(o["t"] - s["t"]) <= 25
-                      and o["stillness"] is not None and o["stillness"] < STILL for j, o in enumerate(shots))
-        s["kind"] = "FT" if still else "FG"
-        s["ft_pair"] = still and partner
+        partner = any(j != i and o["basket"] == s["basket"] and abs(o["t"] - s["t"]) <= PAIR_GAP
+                      and is_still(o, STILL) for j, o in enumerate(shots))
+        # A nearly still attempt next to a clear free throw at the same basket is the other free
+        # throw of the pair (Mitty 29:42, stillness 0.133, 15 s after a clear one).
+        s["kind"] = "FT" if is_still(s, STILL) or (partner and is_still(s, STILL_PAIRED)) else "FG"
+    for i, s in enumerate(shots):
+        s["ft_pair"] = s["kind"] == "FT" and any(
+            j != i and o["kind"] == "FT" and o["basket"] == s["basket"] and abs(o["t"] - s["t"]) <= PAIR_GAP
+            for j, o in enumerate(shots))
+
+    # A missed shot on which the shooter is fouled isn't a field goal attempt in the box score;
+    # he goes to the line instead. So a missed field goal followed by free throws at the same
+    # basket (same team) with no attempt in between, within FOULED_GAP seconds, while the game
+    # stops (players walking, not playing), is marked "fouled" and left out of the totals.
+    # A made shot followed by one free throw (an and-one) still counts. A single free throw also
+    # means and-one, so then the shot is kept even if it was called a miss (Riordan 20:08: the
+    # make rule missed the basket, the scoreboard went up by 2, then one free throw).
+    for i, s in enumerate(shots[:-1]):
+        nxt = shots[i + 1]
+        if (s["kind"] == "FG" and not s["made"] and nxt["kind"] == "FT" and nxt["ft_pair"]
+                and nxt["basket"] == s["basket"] and nxt["t"] - s["t"] <= FOULED_GAP):
+            m = motion(doc, s["t"] + 2, s["t"] + 12)
+            if m is not None and m < DEAD_AFTER:
+                s["kind"] = "fouled"
 
     # Basket vote. "Valley attacks left in the first half" is the same claim as "Valley attacks
     # right in the second", so every vote counts toward one of two answers.
@@ -200,7 +234,8 @@ def split(doc, shots, game, window):
             "shooter_agrees": sum(s["shooter_jersey"] == s["team"] for s in shots),
             "shooter_known": sum(s["shooter_jersey"] != "unsure" for s in shots),
             "warmup_dropped": sum(s["kind"] == "warmup" for s in dropped),
-            "dead_ball_dropped": sum(s["kind"] == "dead_ball" for s in dropped)}
+            "dead_ball_dropped": sum(s["kind"] == "dead_ball" for s in dropped),
+            "fouled": sum(s["kind"] == "fouled" for s in shots)}
     return sorted(shots + dropped, key=lambda s: s["t"]), info
 
 
@@ -253,9 +288,16 @@ def main():
     shots = json.loads(args.tracks.with_suffix(".shots.json").read_text())
     game = next(g for g in yaml.safe_load((ML / "games.yaml").read_text())["games"] if g["id"] == args.game)
     window = game.get("game_window", [0.0, doc["frames"][-1][0]])
-    shots, info = split(doc, shots, game, window)
+    # Halftime from game_window.py, if it has been run on this tracks file.
+    found = args.tracks.with_suffix(".window.json")
+    half_break = None
+    if found.exists():
+        w = json.loads(found.read_text())
+        if w.get("found") and w.get("halftime"):
+            half_break = w["halftime"]
+    shots, info = split(doc, shots, game, window, half_break)
     print(f"halftime at {info['halftime']} s; Valley shoots at the {info['valley_basket_first_half']} basket "
-          f"in the first half (votes {info['votes']}); dropped {info['warmup_dropped']} warmup and {info['dead_ball_dropped']} dead-ball attempts; shooter jersey agrees on "
+          f"in the first half (votes {info['votes']}); dropped {info['warmup_dropped']} warmup and {info['dead_ball_dropped']} dead-ball attempts and {info['fouled']} fouled misses; shooter jersey agrees on "
           f"{info['shooter_agrees']} of {info['shooter_known']} shots where it was seen")
     hudl = hudl_totals(args.game)
     print(f"{'':10}{'AIM FG':>10}{'Hudl FG':>10}{'AIM FT':>10}{'Hudl FT':>10}")
