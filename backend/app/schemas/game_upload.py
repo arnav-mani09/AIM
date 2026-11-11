@@ -29,6 +29,9 @@ class FilmUploadStart(BaseModel):
   filename: str = Field(min_length=1, max_length=255)
   content_type: str
   size_bytes: int = Field(gt=0)
+  # Optional jersey colors ("white", "light blue", ...) so AIM knows which team is Valley.
+  valley_jersey: str | None = Field(default=None, max_length=40)
+  opponent_jersey: str | None = Field(default=None, max_length=40)
 
 
 class FilmUploadStarted(BaseModel):
