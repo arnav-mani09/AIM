@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     # Run player detection after the proxy. Off until detect_players is deployed to aim-film.
     detection_enabled: bool = False
     sentry_dsn: str | None = None
+    # Coach chatbot. Without a key the chat endpoint answers 503 and the rest of the app works.
+    anthropic_api_key: str | None = None
+    chat_model: str = "claude-opus-5-5"
+    chat_daily_limit: int = 200  # questions per team per day, to bound cost
 
     class Config:
         env_file = ".env"

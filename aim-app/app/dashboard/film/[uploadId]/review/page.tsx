@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 
+import ChatPanel from "@/components/ChatPanel";
 import { fetchFilmPlaybackUrl } from "@/lib/teamApi";
 import {
   addReviewShot,
@@ -331,6 +332,8 @@ export default function ReviewPage() {
           </section>
 
           <BoxScore valley={lines.valley} opponent={lines.opponent} />
+
+          <ChatPanel token={token} teamId={teamId} uploadId={uploadId} onSeek={playFrom} />
 
           <section className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
             <div className="section-card flex flex-col gap-4">
