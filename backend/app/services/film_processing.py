@@ -12,6 +12,7 @@ from app.core.config import deployment_environment, get_settings
 from app.models.film_segment import FilmSegment
 from app.models.game_upload import GameUpload
 from app.services import storage
+from app.services.shot_events import load_events
 
 
 # A full game takes ~5 min on the worker. A job that hasn't finished well past
@@ -21,6 +22,8 @@ STUCK_AFTER = timedelta(minutes=45)
 MAX_ATTEMPTS = 2
 # Detection on a 60-minute game should take well under 30 min; the worker's own limit is 90.
 DETECTION_STUCK_AFTER = timedelta(minutes=100)
+# The event step takes seconds; the worker's limit is 15 min.
+EVENTS_STUCK_AFTER = timedelta(minutes=20)
 
 
 class FilmProcessingService:
@@ -165,6 +168,70 @@ class FilmProcessingService:
         upload.detection_job_id = None
         self.db.commit()
         print(f"[DETECT] Upload {upload.id}: {result['tracks']} tracks, {result.get('timings_seconds')}")
+        self.start_events(upload.id)
+
+    def start_events(self, upload_id: int) -> None:
+        """Draft shot events from the tracks (CPU, seconds). Also used to rerun on old uploads."""
+        upload = self.db.query(GameUpload).filter(GameUpload.id == upload_id).first()
+        key = storage.key_from_storage_url(upload.tracks_url) if upload else None
+        if not upload or not key:
+            return
+        try:
+            make_events = modal.Function.from_name(self.settings.modal_film_app, "make_events")
+            call = make_events.spawn(key, upload.valley_jersey, upload.opponent_jersey,
+                                     environment=deployment_environment())
+        except Exception as exc:
+            print(f"[EVENTS] Could not start the event step for upload {upload.id}: {exc}")
+            sentry_sdk.capture_exception(exc)
+            upload.events_status = "error"
+            upload.events_error = f"Could not start the event step: {exc}"[:1000]
+            self.db.commit()
+            return
+        upload.events_status = "running"
+        upload.events_job_id = call.object_id
+        upload.events_error = None
+        upload.events_started_at = datetime.utcnow()
+        self.db.commit()
+
+    def refresh_events(self, upload_id: int) -> None:
+        """Collect a finished event job and store its shots."""
+        upload = (
+            self.db.query(GameUpload)
+            .filter(GameUpload.id == upload_id, GameUpload.events_status == "running",
+                    GameUpload.events_job_id.isnot(None))
+            .with_for_update(skip_locked=True)
+            .first()
+        )
+        if not upload:
+            self.db.rollback()
+            return
+        try:
+            result = modal.FunctionCall.from_id(upload.events_job_id).get(timeout=0)
+        except TimeoutError:
+            started = upload.events_started_at
+            if started and datetime.utcnow() - started > EVENTS_STUCK_AFTER:
+                self.cancel_job(upload.events_job_id)
+                upload.events_status = "error"
+                upload.events_error = "The event step did not finish."
+                upload.events_job_id = None
+                self.db.commit()
+            else:
+                self.db.rollback()
+            return
+        except Exception as exc:
+            print(f"[EVENTS] Event step failed for upload {upload.id}: {exc}")
+            sentry_sdk.capture_exception(exc)
+            upload.events_status = "error"
+            upload.events_error = str(exc)[:1000] or exc.__class__.__name__
+            upload.events_job_id = None
+            self.db.commit()
+            return
+        count = load_events(self.db, upload, result)
+        upload.events_url = storage.to_storage_url(result["events_key"])
+        upload.events_status = "done"
+        upload.events_job_id = None
+        self.db.commit()
+        print(f"[EVENTS] Upload {upload.id}: {count} shots stored, {result.get('timings_seconds')}")
 
     def cancel_job(self, job_id: str) -> None:
         try:
@@ -201,6 +268,13 @@ class FilmProcessingService:
         )
         for (upload_id,) in detecting:
             self.refresh_detection(upload_id)
+        drafting = (
+            self.db.query(GameUpload.id)
+            .filter(GameUpload.events_status == "running", GameUpload.events_job_id.isnot(None))
+            .all()
+        )
+        for (upload_id,) in drafting:
+            self.refresh_events(upload_id)
 
     def process_without_worker(self, upload_id: int) -> None:
         """Fallback when the worker can't run: duration via ffprobe, no proxy."""

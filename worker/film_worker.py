@@ -2,9 +2,10 @@
 
 Deploy:  backend/.venv/bin/modal deploy worker/film_worker.py
 Run one: backend/.venv/bin/modal run worker/film_worker.py --source-key teams/1/film/abc.mp4 [--detect]
+         (or --events with a tracks key as --source-key)
 
 The backend starts `make_proxy` when an upload completes and polls the call
-for its result, then starts `detect_players` (GPU) the same way.
+for its result, then starts `detect_players` (GPU) the same way, then `make_events`.
 """
 
 import json
@@ -235,7 +236,70 @@ def _detect_players(source_key: str) -> dict:
     }
 
 
+# --- Shot events (CPU) ------------------------------------------------------------
+# Drafted shots with team, free throw vs field goal, make and confidence, from the tracks
+# alone. Rules live in ml/tools (copied into the image at deploy), so redeploy after
+# changing them. Separate from detection so it can be rerun on old uploads in seconds.
+_tools = Path(__file__).resolve().parent.parent / "ml" / "tools"
+events_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .pip_install("numpy<3", "opencv-python-headless==4.10.0.84", "pyyaml==6.0.2",
+                 "boto3==1.40.76", "sentry-sdk==2.71.0")
+    .add_local_file(Path(__file__).with_name("shot_events.py"), "/root/shot_events.py")
+    .add_local_file(_tools / "shots.py", "/root/shots.py")
+    .add_local_file(_tools / "shot_split.py", "/root/shot_split.py")
+    .add_local_file(_tools / "game_window.py", "/root/game_window.py")
+)
+
+
+@app.function(
+    image=events_image,
+    secrets=[modal.Secret.from_name("aim-r2"), modal.Secret.from_name("aim-sentry")],
+    cpu=2.0,
+    memory=8192,
+    timeout=15 * 60,
+)
+def make_events(tracks_key: str, valley_jersey: str | None = None, opponent_jersey: str | None = None,
+                environment: str = "development") -> dict:
+    """Write <stem>.events.json next to the tracks in R2 and return it (events plus box score)."""
+    import sentry_sdk
+
+    _init_sentry(environment)
+    sentry_sdk.set_tag("tracks_key", tracks_key)
+    try:
+        return _make_events(tracks_key, valley_jersey, opponent_jersey)
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        sentry_sdk.flush(timeout=5)
+        raise
+
+
+def _make_events(tracks_key: str, valley_jersey: str | None, opponent_jersey: str | None) -> dict:
+    import gzip
+    import sys
+
+    sys.path.insert(0, "/root")
+    import shot_events
+
+    started = time.monotonic()
+    bucket = os.environ["R2_BUCKET"]
+    r2 = _r2()
+    body = r2.get_object(Bucket=bucket, Key=tracks_key)["Body"].read()
+    doc = json.loads(gzip.decompress(body) if tracks_key.endswith(".gz") else body)
+    result = shot_events.build_events(doc, valley_jersey, opponent_jersey)
+    stem = tracks_key[:-len(".json.gz")] if tracks_key.endswith(".json.gz") else tracks_key.rsplit(".", 1)[0]
+    events_key = f"{stem}.events.json"
+    r2.put_object(Bucket=bucket, Key=events_key, Body=json.dumps(result).encode(), ContentType="application/json")
+    result["events_key"] = events_key
+    result["timings_seconds"] = {"total": round(time.monotonic() - started, 1)}
+    return result
+
+
 @app.local_entrypoint()
-def main(source_key: str, environment: str = "development", detect: bool = False):
-    fn = detect_players if detect else make_proxy
-    print(json.dumps(fn.remote(source_key, environment=environment), indent=2))
+def main(source_key: str, environment: str = "development", detect: bool = False, events: bool = False):
+    """--events takes a tracks key as --source-key."""
+    fn = make_events if events else detect_players if detect else make_proxy
+    result = fn.remote(source_key, environment=environment)
+    if events:  # the event list is long; show the summary
+        result = {k: v for k, v in result.items() if k != "events"} | {"event_count": len(result["events"])}
+    print(json.dumps(result, indent=2))

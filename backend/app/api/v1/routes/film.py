@@ -23,6 +23,9 @@ from app.schemas.game_upload import (
     UploadedPart,
 )
 from app.schemas.film_segment import FilmSegmentRead, FilmSegmentCreate
+from app.schemas.shot_event import ShotEventCreate, ShotEventPatch, ShotEventRead, ShotEventsRead
+from app.models.shot_event import ShotEvent
+from app.services import shot_events
 from app.schemas.clip import ClipRead
 from app.services import storage
 from app.services.film_processing import FilmProcessingService
@@ -148,6 +151,8 @@ def start_film_upload(
         size_bytes=payload.size_bytes,
         status="uploading",
         game_id=game.id if game else None,
+        valley_jersey=payload.valley_jersey,
+        opponent_jersey=payload.opponent_jersey,
     )
     db.add(upload)
     db.commit()
@@ -377,3 +382,114 @@ def publish_segment_as_clip(
     link_clip_to_possessions(db, clip)
     hydrate_clip_stats(db, clip)
     return clip
+
+
+# --- Drafted shot events (the coach review screen) ---------------------------------
+
+
+def _events_response(db: Session, upload: GameUpload) -> ShotEventsRead:
+    events = (
+        db.query(ShotEvent)
+        .filter(ShotEvent.upload_id == upload.id)
+        .order_by(ShotEvent.t.asc(), ShotEvent.id.asc())
+        .all()
+    )
+    return ShotEventsRead(
+        status=shot_events.review_status(upload),
+        events=events,
+        box_score=shot_events.box_score(events),
+        teams_guessed=bool((upload.events_info or {}).get("teams_guessed")),
+    )
+
+
+def _get_event(db: Session, upload_id: int, event_id: int) -> ShotEvent:
+    event = db.query(ShotEvent).filter(ShotEvent.id == event_id, ShotEvent.upload_id == upload_id).first()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shot not found")
+    return event
+
+
+@router.get("/{upload_id}/events", response_model=ShotEventsRead)
+def list_shot_events(
+    team_id: int,
+    upload_id: int,
+    db: Session = Depends(deps.get_db_session),
+    _membership=Depends(deps.require_team_membership),
+):
+    """AIM's drafted shots for this film and the box score they add up to."""
+    upload = _get_upload(db, team_id, upload_id)
+    if upload.events_status == "running" and upload.events_job_id:
+        FilmProcessingService(db).refresh_events(upload.id)
+        db.refresh(upload)
+    return _events_response(db, upload)
+
+
+@router.patch("/{upload_id}/events/{event_id}", response_model=ShotEventRead)
+def update_shot_event(
+    team_id: int,
+    upload_id: int,
+    event_id: int,
+    payload: ShotEventPatch,
+    db: Session = Depends(deps.get_db_session),
+    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
+):
+    _get_upload(db, team_id, upload_id)
+    event = _get_event(db, upload_id, event_id)
+    shot_events.apply_patch(event, payload.model_dump(exclude_unset=True), current_user.id)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@router.post("/{upload_id}/events", response_model=ShotEventRead, status_code=status.HTTP_201_CREATED)
+def add_shot_event(
+    team_id: int,
+    upload_id: int,
+    payload: ShotEventCreate,
+    db: Session = Depends(deps.get_db_session),
+    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
+):
+    """A shot the model missed, added by the coach."""
+    _get_upload(db, team_id, upload_id)
+    event = ShotEvent(upload_id=upload_id, type="shot", confidence=1.0, status="fixed", original=None,
+                      updated_by_id=current_user.id, **payload.model_dump())
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@router.post("/{upload_id}/events/swap-teams", response_model=ShotEventsRead)
+def swap_shot_event_teams(
+    team_id: int,
+    upload_id: int,
+    db: Session = Depends(deps.get_db_session),
+    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
+):
+    """Flip Valley and Opponent on every shot, for when the jersey colors were guessed wrong."""
+    upload = _get_upload(db, team_id, upload_id)
+    shot_events.swap_teams(db, upload, current_user.id)
+    db.commit()
+    return _events_response(db, upload)
+
+
+@router.post("/{upload_id}/events/rerun", response_model=ShotEventsRead, status_code=status.HTTP_202_ACCEPTED)
+def rerun_shot_events(
+    team_id: int,
+    upload_id: int,
+    db: Session = Depends(deps.get_db_session),
+    _membership=Depends(deps.require_team_membership),
+):
+    """Draft the shots again from this film's tracks (after the rules improve, or for films
+    detected before the event step existed). Shots a coach already reviewed are kept."""
+    upload = _get_upload(db, team_id, upload_id)
+    if upload.detection_status != "done" or not upload.tracks_url:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Player detection hasn't finished for this film")
+    if upload.events_status == "running":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Shots are already being drafted")
+    FilmProcessingService(db).start_events(upload.id)
+    db.refresh(upload)
+    return _events_response(db, upload)

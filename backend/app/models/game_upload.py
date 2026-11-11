@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, BigInteger, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -33,6 +33,19 @@ class GameUpload(Base):
     detection_attempts = Column(Integer, nullable=False, default=0, server_default="0")
     detection_model = Column(String, nullable=True)
     tracks_url = Column(String, nullable=True)
+    # Drafted shot events, made from the tracks after detection (film_worker.make_events).
+    # events_status: None (not started), "running", "done", "error".
+    events_status = Column(String, nullable=True)
+    events_job_id = Column(String, nullable=True)
+    events_error = Column(Text, nullable=True)
+    events_started_at = Column(DateTime, nullable=True)
+    events_url = Column(String, nullable=True)
+    # Game window, halftime, basket vote and whether the team colors were guessed.
+    events_info = Column(JSON, nullable=True)
+    # Jersey colors ("white", "light blue", ...) so the model knows which team is Valley.
+    # Optional: without them the teams are a guess the coach can flip in one click.
+    valley_jersey = Column(String, nullable=True)
+    opponent_jersey = Column(String, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="pending")
@@ -42,6 +55,7 @@ class GameUpload(Base):
     uploaded_by = relationship("User")
     game = relationship("Game", back_populates="uploads")
     segments = relationship("FilmSegment", back_populates="upload", cascade="all, delete-orphan")
+    shot_events = relationship("ShotEvent", back_populates="upload", cascade="all, delete-orphan")
 
     @property
     def has_proxy(self) -> bool:
