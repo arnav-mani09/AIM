@@ -114,6 +114,14 @@ export function addReviewShot(token: string, teamId: number, uploadId: number, s
   );
 }
 
+/** Find the shots again from the film's tracks. Shots a coach already reviewed are kept. */
+export function rerunReviewEvents(token: string, teamId: number, uploadId: number): Promise<ReviewData> {
+  return withMock(
+    () => call<ReviewData>(`${eventsPath(teamId, uploadId)}/rerun`, token, { method: "POST" }),
+    mockFetchEvents,
+  );
+}
+
 /** Box score from the shots on screen, so it updates the moment a coach fixes something. */
 export function boxScore(events: ShotEvent[]): Record<TeamSide, TeamLine> {
   const empty = (): TeamLine => ({ fgm: 0, fga: 0, fg3m: 0, fg3a: 0, ftm: 0, fta: 0, pts: 0 });

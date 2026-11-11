@@ -16,6 +16,7 @@ import {
   forceMock,
   isUsingMock,
   patchReviewEvent,
+  rerunReviewEvents,
   ReviewData,
   ShotEvent,
   ShotType,
@@ -88,6 +89,18 @@ export default function ReviewPage() {
   }, [token, teamId, uploadId]);
 
   useEffect(load, [load]);
+
+  // Films uploaded before the shot finder existed (or after it improves) need it run again.
+  const rerun = useCallback(() => {
+    if (!token) return;
+    setActionError(null);
+    rerunReviewEvents(token, teamId, uploadId)
+      .then((result) => {
+        setData(result);
+        setEvents(result.events);
+      })
+      .catch((err) => setActionError(err instanceof Error ? err.message : "Couldn't start finding shots."));
+  }, [token, teamId, uploadId]);
 
   // Keep checking while AIM is still working on the film.
   useEffect(() => {
@@ -289,14 +302,20 @@ export default function ReviewPage() {
             The shots will show up here when it&apos;s done. A full game usually takes about 30 minutes. This page
             checks again on its own.
           </p>
+          <p className="mt-4 text-sm text-subtext">Uploaded this film before shots were added, or stuck for over an hour?</p>
+          <button onClick={rerun} className="mt-2 rounded-2xl bg-accent px-4 py-2 font-semibold text-white">
+            Find shots now
+          </button>
         </section>
       ) : data.status === "failed" ? (
         <section className="section-card">
           <h2 className="text-xl font-semibold text-red-600">AIM couldn&apos;t finish this film</h2>
           <p className="mt-2 text-subtext">
-            Something went wrong while finding shots. Try uploading the film again, or contact us and we&apos;ll look
-            into it.
+            Something went wrong while finding shots. Try again below, or contact us and we&apos;ll look into it.
           </p>
+          <button onClick={rerun} className="mt-4 rounded-2xl bg-accent px-4 py-2 font-semibold text-white">
+            Try finding shots again
+          </button>
         </section>
       ) : (
         <>
