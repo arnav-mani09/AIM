@@ -9,16 +9,16 @@ the same frame, so that doesn't matter):
   in the frame (far-court hoops from other games are small).
 - Attempt: the ball enters the zone above a game rim (up to 3 rim-widths above it,
   half a rim-width to either side) after being out of it for SHOT_GAP seconds.
-- Make: within MAKE_WINDOW seconds of an attempt, the ball is seen moving down with its
-  center inside the rim's width, at or just below the rim. Otherwise a miss.
+- Make: the ball drops from above the rim to under the net near its center (see decide()).
+  Otherwise a miss.
 Writes <tracks>.shots.json and, with --video, a sheet of make frames and one of misses.
 These are rules, not a model; the stats sheet is the check.
 
-Status (Nov 3, game 1): attempts look right (128, ball in flight at a game rim in every
-sampled one). Make/miss agreed with a hand check on 7 of 8 shots used for tuning but only
-5 of 9 clear fresh ones: at 10 fps a rim-out and a make look too alike. Next: detect at
-30 fps in a window around each attempt, and train a small make/miss classifier on
-labeled rim clips.
+Status (Nov 10): make rule rewritten after hand-checking every Mitty attempt on 30 fps rim
+crops. On Mitty (used for tuning) it catches 46 of 52 real makes and calls 3 of 66 real
+misses makes (the old rule: 25 of 52, and 10 false). Totals: Mitty 52 makes found vs 53
+official, Riordan 57 vs 61. Still open: halftime warmups fall inside the game window and
+add attempts; dead-ball shots after a whistle look like real makes.
 """
 
 import argparse
@@ -92,37 +92,66 @@ def find_shots(doc: dict) -> list[dict]:
     return shots
 
 
+# Make rule, in rim units: x is the ball's sideways offset from the rim's center in rim widths,
+# y is its height below the rim's top edge in rim-box heights (0 = rim top, 1 = rim front edge).
+# The net hangs to about y = 1.5, so y >= UNDER_NET means the ball has come out of the bottom.
+UNDER_NET = 1.6
+NET_EXIT_X = 0.35   # a make leaves the net near its center; a ball rolling off the side is wider
+OVER_RIM_X = 0.8    # the last point above the rim must be roughly over it
+SIDE_X = 0.6        # on the way down it must stay inside the rim's width
+DROP_TIME = 1.5     # a ball can roll around the rim for over a second before dropping in
+
+
+def rim_units(p):
+    t, bx, by, x0, y0, x1, y1 = p
+    return t, (bx - (x0 + x1) / 2) / (x1 - x0), (by - y0) / max(1.0, y1 - y0)
+
+
 def decide(shot: dict) -> dict:
-    """Make = within 0.5 s the ball goes from above the rim to below the rim's bottom while
-    inside its width (the net can take 2-3 frames), and in the next 0.4 s it neither goes
-    back up nor reverses its sideways direction. A rim-out bounces: it comes in moving one
-    way and leaves moving the other, or pops up. A make keeps its line through the net,
-    even at an angle. If the ball is lost right after (hidden by the net or players), it
-    still counts, with less evidence."""
-    path, made, evidence = shot.pop("path"), False, 0
-    for i, (t0, bx0, by0, x0, y0, x1, y1) in enumerate(path):
-        w, h = x1 - x0, y1 - y0
-        inside = lambda bx, slack: x0 - slack * w <= bx <= x1 + slack * w
-        if not (by0 < y0 + 0.2 * h and inside(bx0, 0.25)):
+    """Make = the ball comes out under the net near its center, having dropped there from
+    above the rim without leaving the rim's width, and doesn't pop back up right after.
+    Checked by hand on the Mitty game (Nov 10): a rim-out or a ball rolling off the front
+    rim leaves to the side (x past about 0.4 by the time it's under the net) or bounces up.
+
+    Second, weaker case: the ball is last seen inside the net near its center, then lost
+    for half a second (the net and players hide it).
+
+    The old rule (Nov 3) wanted the ball under the rim within 0.5 s and no change of
+    sideways direction. Balls that roll on the rim take longer, and a ball swinging in the
+    net changes direction, so it called about half the real makes misses."""
+    path = shot.pop("path")
+    pts = [rim_units(p) for p in path]
+    made, evidence, make_t = False, 0, None
+    for k, (t, x, y) in enumerate(pts):
+        if y < UNDER_NET:
             continue
-        for j in range(i + 1, len(path)):
-            t1, bx1, by1 = path[j][:3]
-            if t1 - t0 > 0.5:
+        # First point under the net. Look back to the last point above the rim.
+        above = [j for j in range(k) if pts[j][2] < 0.3]
+        if above:
+            a = above[-1]
+            ta, xa = pts[a][0], pts[a][1]
+            stays_inside = all(abs(pts[j][1]) <= SIDE_X for j in range(a + 1, k))
+            pops_up = any(q[2] < 0.3 for q in pts[k + 1:] if q[0] - t <= 0.4)
+            if (abs(xa) <= OVER_RIM_X and t - ta <= DROP_TIME and y <= 5.5 and stays_inside
+                    and abs(x) <= NET_EXIT_X and not pops_up):
+                made, make_t = True, t
+                evidence = 1 + sum(1 for q in pts[k + 1:] if q[0] - t <= 0.4 and abs(q[1]) <= SIDE_X)
+        break
+    if not made:
+        for k, (t, x, y) in enumerate(pts):
+            if not (0.6 <= y < UNDER_NET and abs(x) <= 0.25):
+                continue
+            above = [j for j in range(k) if pts[j][2] < 0.3]
+            if not above or abs(pts[above[-1]][1]) > OVER_RIM_X or t - pts[above[-1]][0] > 1.0:
+                continue
+            nxt = pts[k + 1][0] if k + 1 < len(pts) else None
+            if nxt is None or nxt - t >= 0.5:
+                made, make_t, evidence = True, t, 0
                 break
-            if by1 > y1 and inside(bx1, 0.1):
-                follow = [p for p in path[j + 1:] if p[0] - t1 <= 0.4]
-                dx_in = bx1 - bx0
-                dx_out = follow[-1][1] - bx1 if follow else 0.0
-                pops_up = any(p[2] < by1 - 0.5 * h for p in follow)
-                reverses = dx_in * dx_out < 0 and abs(dx_out) > 0.2 * w
-                if not pops_up and not reverses and all(inside(p[1], 0.6) for p in follow):
-                    made, evidence = True, 1 + len(follow)
-                    shot["make_t"] = t1
-                break
-        if made:
-            break
     shot["made"] = made
     shot["evidence"] = evidence
+    if make_t is not None:
+        shot["make_t"] = make_t
     # Rough confidence until it's calibrated against stats sheets.
     shot["confidence"] = round(min(1.0, 0.5 * shot["ball_score"] + 0.3 * shot["rim_score"] + 0.2 * min(1, evidence)), 2)
     return shot
