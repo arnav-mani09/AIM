@@ -42,6 +42,8 @@ SEARCH = 1.2             # rim widths either side of the average arc to look for
 ARC_FT = 19.75           # high school 3-point distance from the center of the basket (NFHS)
 MARGIN_FT = 0.5          # feet within this many feet past the arc count as on the line: a 2
 BX, BY = RX, RY + int(FLOOR_BELOW * SC)
+_T = np.linspace(0, 2 * np.pi, 160, endpoint=False)
+COS_T, SIN_T = np.cos(_T), np.sin(_T)   # 160 points around each ellipse
 
 
 def frame_at(doc, t):
@@ -210,25 +212,42 @@ def fit_arc(resp, cover, side, around=None):
     on = resp[cover]
     c = np.clip(resp / (np.percentile(on[on > 0], 97) + 1e-6), 0, 1)
 
-    def along(p, cm):
-        x, y = ellipse_points(*p, side)
+    def along_many(P, cm):
+        """Mean line strength on each ellipse in P (rows of cx, cy, a, b, angle), all at once.
+        NaN where under 60% of the outline is on the floor seen in enough shot frames."""
+        cx, cy, a, b, th = (P[:, i:i + 1] for i in range(5))
+        x = cx + a * COS_T * np.cos(th) - b * SIN_T * np.sin(th)
+        y = cy + a * COS_T * np.sin(th) + b * SIN_T * np.cos(th)
+        keep = x > BX - 2 * SC if side == "left" else x < BX + 2 * SC
         xi, yi = x.astype(int), y.astype(int)
-        ok = (xi >= 0) & (xi < MAP_W) & (yi >= 0) & (yi < MAP_H)
-        ok[ok] &= cover[yi[ok], xi[ok]]
-        if ok.mean() < 0.6:
-            return None
-        return float(cm[yi[ok], xi[ok]].mean())
+        ok = keep & (xi >= 0) & (xi < MAP_W) & (yi >= 0) & (yi < MAP_H)
+        xi, yi = np.clip(xi, 0, MAP_W - 1), np.clip(yi, 0, MAP_H - 1)
+        ok &= cover[yi, xi]
+        n_keep, n_ok = keep.sum(1), ok.sum(1)
+        vals = np.where(ok, cm[yi, xi], 0).sum(1) / np.maximum(n_ok, 1)
+        return np.where(n_ok >= 0.6 * np.maximum(n_keep, 1), vals, np.nan)
 
-    def score(p, cm, off=10):
-        """Line strength on the ellipse minus on slightly smaller and larger copies. A painted line is
+    def score_many(P, cm, off=10):
+        """Line strength on each ellipse minus on slightly smaller and larger copies. A painted line is
         strong only right on it; floor grain, crowds and lettering are strong all around."""
-        on = along(p, cm)
-        if on is None:
-            return -1.0
-        cx, cy, a, b, th = p
-        side_vals = [along((cx, cy, a + d, b + d, th), cm) for d in (-off, off)]
-        side_vals = [v for v in side_vals if v is not None]
-        return on - (sum(side_vals) / len(side_vals) if side_vals else on)
+        out = np.empty(len(P))
+        for i in range(0, len(P), 4000):      # in chunks, to keep memory small
+            Q = P[i:i + 4000]
+            on = along_many(Q, cm)
+            sides = []
+            for d in (-off, off):
+                R = Q.copy()
+                R[:, 2] += d
+                R[:, 3] += d
+                sides.append(along_many(R, cm))
+            sides = np.array(sides)
+            n = (~np.isnan(sides)).sum(0)
+            side_mean = np.where(n > 0, np.nansum(sides, 0) / np.maximum(n, 1), on)
+            out[i:i + 4000] = np.where(np.isnan(on), -1.0, on - side_mean)
+        return out
+
+    def score(p, cm):
+        return float(score_many(np.array([p], dtype=np.float64), cm)[0])
 
     # Lines are a few pixels wide, so a coarse grid would step right over them. Widen them with a max
     # filter (keeps a thin line as strong as a bright blob, unlike a blur), search coarsely, then
@@ -243,17 +262,12 @@ def fit_arc(resp, cover, side, around=None):
         grid = (cx0 + np.arange(-1, 1.01, 0.25) * SC, cy0 + np.arange(-0.5, 0.51, 0.25) * SC,
                 a0 + np.arange(-1, 1.01, 0.25) * SC, b0 + np.arange(-0.3, 0.31, 0.15) * SC,
                 th0 + np.deg2rad(np.arange(-3, 3.1, 1.5)))
-    coarse = []
-    for cx in grid[0]:
-        for cy in grid[1]:
-            for a in grid[2]:
-                for b in grid[3]:
-                    for th in grid[4]:
-                        p = (cx, cy, a, b, th)
-                        coarse.append((score(p, levels[0]), p))
-    coarse.sort(key=lambda x: -x[0])
+    mesh = np.stack(np.meshgrid(*grid, indexing="ij"), -1).reshape(-1, 5)
+    scores = score_many(mesh, levels[0])
+    order = np.argsort(-scores, kind="stable")
+    coarse = [(scores[i], tuple(float(v) for v in mesh[i])) for i in order[:40]]
     best, best_s = None, -1.0
-    for _, p in coarse[:40]:
+    for _, p in coarse:
         steps = [SC / 4, SC / 4, SC / 4, SC / 8, np.deg2rad(1)]
         for cm in levels:
             s_ = score(p, cm)
@@ -320,8 +334,29 @@ def refine(lines_frame, M, ang, r_avg):
     return float(rs[(a + b) // 2])
 
 
-def classify(doc, shots, video, side_of, debug=None):
+def read_at(cap, video, t):
+    """One frame at t seconds. Seeks, so only the frames around each shot get decoded. The film can
+    be a file or a web link (a signed R2 link on Modal); a link can drop, so on a failed read it
+    reopens the film once and tries again."""
+    for attempt in range(2):
+        cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
+        ok, img = cap.read()
+        if ok:
+            return img
+        if attempt == 0:
+            cap.open(str(video))
+    return None
+
+
+def classify(doc, shots, video, side_of=None, debug=None):
+    """Label each field goal in shots (from shot_split) with points 2 or 3, margin and arc_source.
+    Changes the shots in place and returns the arc found for each basket."""
+    if side_of is None:   # which basket: the rim's side of the picture
+        half_w = doc["frame_size"][0] / 2
+        side_of = lambda rim: "left" if (rim[0] + rim[2]) / 2 < half_w * 960 / doc["frame_size"][0] else "right"  # noqa: E731
     cap = cv2.VideoCapture(str(video))
+    if not cap.isOpened():
+        raise OSError(f"can't open the film: {str(video)[:80]}")
     scale = 960 / doc["frame_size"][0]   # work on half-size frames: plenty for court lines
     frames, acc = {}, {}
     for s in shots:
@@ -332,9 +367,8 @@ def classify(doc, shots, video, side_of, debug=None):
             s["points"] = None
             continue
         s.update(tk)
-        cap.set(cv2.CAP_PROP_POS_MSEC, tk["take"] * 1000)
-        ok, img = cap.read()
-        if not ok:
+        img = read_at(cap, video, tk["take"])
+        if img is None:
             s["points"] = None
             continue
         img = cv2.resize(img, (960, int(doc["frame_size"][1] * scale)))
@@ -401,8 +435,7 @@ def main():
     doc = json.loads(args.tracks.read_text())
     split = json.loads(args.tracks.with_suffix(".split.json").read_text())
     shots = split["shots"]
-    half_w = doc["frame_size"][0] / 2
-    arcs = classify(doc, shots, args.video, lambda rim: "left" if (rim[0] + rim[2]) / 2 < half_w * 960 / doc["frame_size"][0] else "right", args.debug)
+    arcs = classify(doc, shots, args.video, debug=args.debug)
     fg = [s for s in shots if s.get("kind") == "FG"]
     print(f"{len(fg)} field goal attempts, {sum(s.get('points') is None for s in fg)} without a takeoff found")
     for team in ("Valley", "Opponent"):

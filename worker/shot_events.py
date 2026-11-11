@@ -2,20 +2,22 @@
 
 Runs on Modal after detection (film_worker.make_events), and locally for checks:
     ml/.venv/bin/python worker/shot_events.py ml/data/tracks/valley-vs-archbishop-mitty.v4.json \
-        --valley-jersey "light blue" --opponent-jersey white
+        --valley-jersey "light blue" --opponent-jersey white \
+        --video "backend/sample_data/Valley Christian vs Archbishop Mitty CCS - Tactical.mp4"
 
-Steps, all from the tracks alone (no film needed):
+Steps 1 to 3 use the tracks alone; step 4 also needs the film:
 1. Game window and halftime: ml/tools/game_window.py.
 2. Shot attempts and makes: ml/tools/shots.py.
 3. Team and free throw vs field goal: ml/tools/shot_split.py. Warmup and dead-ball shots are
    dropped. Which color group is Valley comes from the jersey colors the coach gave; without
    them it's a guess the coach can flip with one click (teams_guessed).
-4. Field goals are all "fg2" until 3-point detection is wired in (it needs the film, not just
-   tracks). Their shot-type confidence is low, and it's kept separate from the call's
-   confidence so it doesn't flatten the review order.
+4. 2s and 3s: ml/tools/three_point.py, from the shooter's feet and the 3-point arc it finds in
+   the film. It reads only the frames at each shot's takeoff (seeking, not the whole film), so
+   the film can be a signed R2 link. Without film every field goal is "fg2" with a low
+   shot-type confidence kept out of the call's confidence, so it doesn't flatten the review order.
 
 Every event gets one confidence from 0 to 1: the weakest of its parts (attempt, make, team,
-free throw). The parts are kept in the event's "parts" so the review screen can say why.
+free throw, and 2 or 3 when the film was read). The parts are kept in the event's "parts" so the review screen can say why.
 These are rough rules, not calibrated probabilities.
 """
 
@@ -49,7 +51,7 @@ JERSEY_BGR = {
     "purple": (120, 40, 100),
 }
 
-EVENTS_VERSION = 1
+EVENTS_VERSION = 2   # 2: field goals labeled 2 or 3 from the film
 
 
 def _lab(bgr):
@@ -101,6 +103,21 @@ def confidence_parts(s: dict, team_sure: float, guessed: bool) -> dict:
             {"attempt": attempt, "make": make, "team": team, "free_throw": kind}.items()}
 
 
+def shot_type_confidence(s: dict) -> float | None:
+    """How sure the 2 or 3 call is, from how far the feet were from the line. None when there was
+    no call (no takeoff found, so it stays a 2 by default)."""
+    if s.get("points") is None:
+        return None
+    margin = s.get("margin")
+    if margin is None:   # feet behind the basket, where no arc runs: a 2, but an odd spot
+        return 0.6
+    # Right on the line is a coin flip; 3 ft or more either side is clear.
+    sure = 0.55 + 0.4 * min(1.0, abs(margin) / 3.0)
+    if s.get("arc_source") != "own frame":   # line not seen in this frame, so the game's average arc
+        sure = min(sure, 0.85)
+    return round(sure, 2)
+
+
 def box_score(events: list[dict]) -> dict:
     """Team totals from events that aren't deleted. Same shape the API returns."""
     out = {}
@@ -116,7 +133,9 @@ def box_score(events: list[dict]) -> dict:
     return out
 
 
-def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: str | None = None) -> dict:
+def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: str | None = None,
+                 video: str | None = None) -> dict:
+    """video: the film (a path or a link) for 2s and 3s. Without it field goals stay "fg2"."""
     window = game_window.find_window(doc)
     span = (window["start"], window["end"]) if window.get("found") else (0.0, doc["frames"][-1][0])
     half_break = window.get("halftime") if window.get("found") else None
@@ -133,6 +152,19 @@ def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: s
 
     # How clear the basket vote is: the gap between the two answers in standard deviations.
     # 72 to 33 (Mitty) is about 3.8, which is about as sure as this gets.
+    three_point = "not run"
+    if video:
+        import three_point as threes
+
+        try:
+            threes.classify(doc, labeled, video)
+            fg = [s for s in labeled if s["kind"] == "FG"]
+            three_point = f"ran: {sum(s.get('points') is None for s in fg)} of {len(fg)} field goals without a takeoff"
+        except Exception as exc:  # a bad film link shouldn't lose the shots; they stay 2s
+            three_point = f"failed: {exc}"[:200]
+            for s in labeled:
+                s.pop("points", None)
+
     a, b = info["votes"].values()
     z = abs(a - b) / max(1.0, (a + b) ** 0.5)
     team_sure = min(0.95, 0.5 + 0.12 * z)
@@ -141,7 +173,15 @@ def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: s
         if s["kind"] not in ("FG", "FT"):
             continue  # warmup or dead ball
         parts = confidence_parts(s, team_sure, guessed)
-        shot_type = "ft" if s["kind"] == "FT" else "fg2"
+        if s["kind"] == "FT":
+            shot_type, type_sure = "ft", 1.0
+        else:
+            type_sure = shot_type_confidence(s)
+            shot_type = "fg3" if s.get("points") == 3 else "fg2"
+            if type_sure is None and three_point.startswith("ran"):
+                type_sure = 0.5   # film read but no shooter found: a 2 by default, worth a look
+            if type_sure is not None:
+                parts["shot_type"] = type_sure   # counts toward the call's confidence
         events.append({
             "type": "shot",
             "t": round(float(s["t"]), 2),
@@ -151,9 +191,10 @@ def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: s
             "confidence": min(parts.values()),
             "player_number": None,
             "rim": s.get("rim"),
-            "parts": {**parts, "shot_type": 1.0 if shot_type == "ft" else 0.3},
+            "parts": {**parts, "shot_type": type_sure if type_sure is not None else 0.3},
             "detail": {k: s.get(k) for k in ("make_t", "evidence", "stillness", "ft_pair", "basket", "half",
-                                             "shooter_track", "shooter_jersey", "ball_score", "rim_score")},
+                                             "shooter_track", "shooter_jersey", "ball_score", "rim_score",
+                                             "margin", "arc_source", "take")},
         })
     return {
         "version": EVENTS_VERSION,
@@ -163,7 +204,7 @@ def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: s
         "valley_basket_first_half": info["valley_basket_first_half"],
         "votes": info["votes"],
         "dropped": {"warmup": info["warmup_dropped"], "dead_ball": info["dead_ball_dropped"]},
-        "three_point": "not run",
+        "three_point": three_point,
         "events": events,
         "box_score": box_score(events),
     }
@@ -178,12 +219,14 @@ def main() -> None:
     parser.add_argument("tracks", type=Path)
     parser.add_argument("--valley-jersey")
     parser.add_argument("--opponent-jersey")
+    parser.add_argument("--video", help="film path or link, for 2s and 3s")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     opener = gzip.open if args.tracks.suffix == ".gz" else open
     with opener(args.tracks, "rt") as f:
         doc = json.load(f)
-    result = build_events(doc, args.valley_jersey, args.opponent_jersey)
+    result = build_events(doc, args.valley_jersey, args.opponent_jersey, args.video)
+    print(f"3-point: {result['three_point']}")
     print(f"window {result['window']['start']} to {result['window']['end']}, halftime {result['window']['halftime']}, "
           f"teams guessed: {result['teams_guessed']}, {len(result['events'])} events")
     for team, row in result["box_score"].items():

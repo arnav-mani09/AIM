@@ -237,9 +237,14 @@ def _detect_players(source_key: str) -> dict:
 
 
 # --- Shot events (CPU) ------------------------------------------------------------
-# Drafted shots with team, free throw vs field goal, make and confidence, from the tracks
-# alone. Rules live in ml/tools (copied into the image at deploy), so redeploy after
-# changing them. Separate from detection so it can be rerun on old uploads in seconds.
+# Drafted shots with team, free throw vs field goal, 2 or 3, make and confidence. Rules live
+# in ml/tools (copied into the image at deploy), so redeploy after changing them. Separate
+# from detection so it can be rerun on old uploads in a minute or two.
+# 2s and 3s need film frames at each shot. Seeking over a signed link proved unreliable
+# (OpenCV's reader stalls on partial reads), so the film is downloaded first, the same as in
+# make_proxy, and only the frames at the shots are decoded. The 720p playback copy is preferred:
+# it's about 2.5 times smaller than the original and the court lines are just as clear at the
+# 960 px the 3-point tool works at.
 _tools = Path(__file__).resolve().parent.parent / "ml" / "tools"
 events_image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -249,32 +254,51 @@ events_image = (
     .add_local_file(_tools / "shots.py", "/root/shots.py")
     .add_local_file(_tools / "shot_split.py", "/root/shot_split.py")
     .add_local_file(_tools / "game_window.py", "/root/game_window.py")
+    .add_local_file(_tools / "three_point.py", "/root/three_point.py")
 )
 
 
 @app.function(
     image=events_image,
     secrets=[modal.Secret.from_name("aim-r2"), modal.Secret.from_name("aim-sentry")],
-    cpu=2.0,
+    cpu=4.0,
     memory=8192,
     timeout=15 * 60,
 )
 def make_events(tracks_key: str, valley_jersey: str | None = None, opponent_jersey: str | None = None,
-                environment: str = "development") -> dict:
-    """Write <stem>.events.json next to the tracks in R2 and return it (events plus box score)."""
+                environment: str = "development", film_key: str | None = None) -> dict:
+    """Write <stem>.events.json next to the tracks in R2 and return it (events plus box score).
+    film_key is the film for 2s and 3s; by default the playback copy, else the original, found
+    next to the tracks."""
     import sentry_sdk
 
     _init_sentry(environment)
     sentry_sdk.set_tag("tracks_key", tracks_key)
     try:
-        return _make_events(tracks_key, valley_jersey, opponent_jersey)
+        return _make_events(tracks_key, valley_jersey, opponent_jersey, film_key)
     except Exception as exc:
         sentry_sdk.capture_exception(exc)
         sentry_sdk.flush(timeout=5)
         raise
 
 
-def _make_events(tracks_key: str, valley_jersey: str | None, opponent_jersey: str | None) -> dict:
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".mkv", ".avi")
+
+
+def _find_film(r2, bucket: str, tracks_key: str) -> str | None:
+    """The film the tracks came from: tracks are <stem>.tracks-<model>.json.gz next to <stem>.<ext>.
+    Prefer the 720p playback copy, then the original."""
+    stem = tracks_key.split(".tracks-")[0]
+    keys = [o["Key"] for o in r2.list_objects_v2(Bucket=bucket, Prefix=stem + ".").get("Contents", [])]
+    proxy = f"{stem}.proxy-720p.mp4"
+    if proxy in keys:
+        return proxy
+    originals = [k for k in keys if k.lower().endswith(VIDEO_EXTENSIONS) and ".proxy-" not in k]
+    return originals[0] if originals else None
+
+
+def _make_events(tracks_key: str, valley_jersey: str | None, opponent_jersey: str | None,
+                 film_key: str | None = None) -> dict:
     import gzip
     import sys
 
@@ -286,12 +310,26 @@ def _make_events(tracks_key: str, valley_jersey: str | None, opponent_jersey: st
     r2 = _r2()
     body = r2.get_object(Bucket=bucket, Key=tracks_key)["Body"].read()
     doc = json.loads(gzip.decompress(body) if tracks_key.endswith(".gz") else body)
-    result = shot_events.build_events(doc, valley_jersey, opponent_jersey)
+    timings = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        video = None
+        try:
+            film_key = film_key or _find_film(r2, bucket, tracks_key)
+            if film_key:
+                video = Path(tmp) / ("film" + Path(film_key).suffix)
+                r2.download_file(bucket, film_key, str(video))
+        except Exception as exc:  # no film just means no 2s and 3s; the shots still go out
+            print(f"[EVENTS] Could not get the film for {tracks_key}: {exc}")
+            video, film_key = None, None
+        timings["film_download"] = round(time.monotonic() - started, 1)
+        result = shot_events.build_events(doc, valley_jersey, opponent_jersey, str(video) if video else None)
     stem = tracks_key[:-len(".json.gz")] if tracks_key.endswith(".json.gz") else tracks_key.rsplit(".", 1)[0]
     events_key = f"{stem}.events.json"
+    result["film_key"] = film_key
     r2.put_object(Bucket=bucket, Key=events_key, Body=json.dumps(result).encode(), ContentType="application/json")
     result["events_key"] = events_key
-    result["timings_seconds"] = {"total": round(time.monotonic() - started, 1)}
+    timings["total"] = round(time.monotonic() - started, 1)
+    result["timings_seconds"] = timings
     return result
 
 
