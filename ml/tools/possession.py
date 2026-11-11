@@ -2,46 +2,42 @@
 
 Usage:
     ml/.venv/bin/python ml/tools/possession.py ml/data/tracks/valley-vs-archbishop-mitty.v4.json \
-        --game valley-vs-archbishop-mitty [--video "backend/sample_data/<game>.mp4"]
+        --game valley-vs-archbishop-mitty --video "backend/sample_data/<game>.mp4" [--sheets] [--method v1]
 
 Reads <tracks>.json, <tracks>.split.json (shot_split.py) and <tracks>.window.json
 (game_window.py), writes <tracks>.possession.json, and prints the totals next to the Hudl box
-score when the game has one. With --video it also writes contact sheets of each event type for
-a hand check.
+score when the game has one. --video reads each ball holder's jersey color from the film (about
+90 s a game, cached in <tracks>.holders.json); without it the tracker's team split is used.
+--sheets writes zoomed check sheets of each event type and of 30 random moments.
 
-How it decides (rules, not a model):
-- Which team has the ball. The camera follows the ball and pans to whichever basket the play
-  is at, and it never shows both baskets at once (checked on Mitty: 0 frames with rims on both
-  sides). So the side of the frame the game rim is on says which basket the play is at, and a
-  team only attacks one basket per half. A run of frames at one basket is one team's
-  possession. The side has to hold for SWITCH_HOLD seconds before it counts as a change, so a
-  quick look back up the floor doesn't split a possession. Frames with no rim keep the last side.
-- How a possession ends, at each change of basket:
-  - the team's last shot before the change was a make (or a made last free throw): it scored.
-  - it was a miss: the other team got the defensive rebound, if the change came within
-    DREB_DELAY seconds of the miss. A miss followed by another shot from the same team at the
-    same basket is an offensive rebound. A miss with a long wait and no other shot before the
-    change counts as an offensive rebound followed by a turnover.
-  - there was no shot: a turnover. Changes right after a long stop (quarter breaks, the jump
-    ball, halftime) are not turnovers: the ball changes hands by rule there.
-- Turnovers are also skipped when the ball went to the rim after the team's last counted shot
-  (probably a shot the finder missed) and when few players are on screen (timeouts, breaks).
-  A team that scores and then shoots again at the same basket means the other team lost the
-  ball before crossing half court: a backcourt turnover.
-- Steal: a turnover where no official handled the ball in the 12 s before the change. After a
-  violation or an out-of-bounds ball the official hands the ball to the inbounder; after a
-  steal play never stops. (Player movement was tried first and didn't separate the two.)
-- Assist: the ball holder in each frame is the player whose box holds the ball (same test as
-  shot_split.shooter), kept only when it lasts HOLD_MIN frames. A made field goal is assisted
-  when the shooter got the ball from a different player of the same team (not the other
-  jersey group) within ASSIST_WINDOW seconds of the shot, the pass travelled at least a body
-  height (a broken track on one player isn't a pass), and the shooter didn't hold it long.
+Version 2 (default), rules, not a model:
+- Who holds the ball. In each frame the player whose box holds the ball (sideways, from the
+  chest down to a dribble at the feet) has it; a hold counts when the same player keeps it for
+  HOLD_RUN_MIN frames. Player boxes that are really a referee are skipped.
+- Their team. The holder's torso color is read from the film. The two jersey colors are learned
+  from this game's holders, and each track votes over all its holds (plus the tracker's team
+  split), because one hold's crop can catch the floor or the defender. Striped shirts are
+  referees.
+- Team with the ball over time: each frame of a hold is evidence for the holder's team, the
+  basket on screen is weak evidence, and a change costs SWITCH_COST (Viterbi, per half). Touches
+  under BLIP seconds with no shot are merged away. Changes land when the other team first has
+  the ball, not when the camera crosses half court.
+- Rebound: the first clearly-colored holder after a live miss. The same team shooting again at
+  the same basket is an offensive rebound; a referee first is a team rebound (not counted);
+  nobody seen means the defense.
+- Turnover: a change of possession not explained by a make, a defensive rebound, free throws, a
+  period break, a timeout or a ball that went to the rim. Steal: one with no referee handling the
+  ball just before (after violations and out-of-bounds the official hands it to the inbounder).
+- Assist: the hold just before the shooter's catch belongs to a teammate at least a body height
+  away, within PASS_AIR_MAX of the catch and ASSIST_WINDOW of the shot. Uses 2-frame holds too.
 
-Status (Nov 11): tuned on Mitty, checked untouched on Riordan. Mitty lands within about 3 of
-Hudl on most team stats; Riordan is off by 4 to 9 on offensive rebounds, Valley defensive
-rebounds and Opponent turnovers. Known limits: the team-with-the-ball timeline lags real changes
-by the 4 to 8 s the ball takes to cross half court, shots the finder misses turn into fake
-turnovers, and assists depend on a box-overlap ball-holder test that often picks the defender.
+Version 1 (--method v1) took the team with the ball from which basket the camera shows. It lags
+real changes by 4 to 8 s.
+
+Status (Nov 11): tuned on Mitty, checked untouched on Riordan. Possession at random live
+moments, clear cases: v2 right 31 of 40 (v1 25 of 40). Rebounds are close on Riordan; turnovers
+are still the weakest (fake possession changes when a defender is boxed with the ball or a
+missed shot isn't found).
 """
 
 import argparse
@@ -69,6 +65,18 @@ HOLD_MIN = 2          # frames (0.2 s) a player must hold the ball to count as a
 ASSIST_WINDOW = 4.0   # the pass must end within this many seconds before the ball reaches the rim
 SHOOTER_HOLD_MAX = 3.0  # a shooter who held the ball longer than this made his own shot
 MIN_PLAYERS = 5       # fewer players than this on screen means a timeout or a break, not play
+
+# Version 2: who actually holds the ball.
+HOLD_RUN_MIN = 3      # frames (0.3 s) the same player must hold the ball to count as a sustained hold
+HOLD_WEIGHT = 1.0     # evidence per frame of a sustained hold for the holder's team
+HOLD_WEAK = 0.4       # the same, when the holder's jersey color is close to both teams
+CAMERA_WEIGHT = 0.15  # evidence per frame from which basket is on screen (it lags real changes)
+SWITCH_COST = 8.0     # evidence needed to start a new possession (Mitty: 4 gave 158 possessions, 8 gave 114; about 130 is right)
+PASS_AIR_MAX = 3.0    # longest gap between the passer's hold and the catch (the holds miss some frames)
+BLIP = 4.0            # a possession shorter than this, with no shot, between two of the other team's is a touch
+REB_LOOK = 8.0        # after a miss, look this long for the first player to get the ball
+REF_STRIPES = 3.4     # dark/light changes across a torso row at or above this, with dark pixels, is a referee shirt
+REF_DARK = 0.08
 
 
 def side_per_frame(doc):
@@ -352,6 +360,360 @@ def assists(doc, split, holds, groups):
     return out
 
 
+# ---------------------------------------------------------------------------------------------
+# Version 2: possession from who actually holds the ball.
+#
+# Version 1 above times possession by which basket the camera shows, so a change lands when the
+# camera crosses half court, 4 to 8 s late. Version 2 finds the player holding the ball in each
+# frame, reads that player's jersey color from the film, and gives the ball to that team. The
+# camera side only fills in when no one is seen holding the ball.
+
+
+def _iou(a, b):
+    x0, y0, x1, y1 = max(a[1], b[1]), max(a[2], b[2]), min(a[3], b[3]), min(a[4], b[4])
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    inter = (x1 - x0) * (y1 - y0)
+    return inter / ((a[3] - a[1]) * (a[4] - a[2]) + (b[3] - b[1]) * (b[4] - b[2]) - inter)
+
+
+def hold_runs(doc, start, end, min_frames=HOLD_RUN_MIN):
+    """Sustained holds: the same player has the ball for HOLD_RUN_MIN frames or more.
+    A player holds the ball when it sits inside their box sideways (a little slack) anywhere from
+    the chest down to the feet (a dribble). The box nearest the ball's center wins. Player boxes
+    that are really a referee (the detector boxed one person twice) are skipped."""
+    seq, prev = [], None
+    for k, (t, boxes) in enumerate(doc["frames"]):
+        if t < start or t > end:
+            continue
+        recent = prev[:2] if prev and t - prev[2] <= 0.5 else None
+        ball = best_ball(boxes, recent)
+        who = None
+        if ball is not None:
+            bx, by = (ball[1] + ball[3]) / 2, (ball[2] + ball[4]) / 2
+            prev = (bx, by, t)
+            refs = [b for b in boxes if b[0] == 2 and b[5] >= 0.3]
+            best = None
+            for p in players(boxes):
+                x0, y0, x1, y1 = p[1:5]
+                w, h = x1 - x0, y1 - y0
+                if not (x0 - 0.1 * w <= bx <= x1 + 0.1 * w and y0 + 0.1 * h <= by <= y1):
+                    continue
+                if any(_iou(p, r) > 0.5 for r in refs):
+                    continue
+                d = abs(bx - (x0 + x1) / 2) / w
+                if best is None or d < best[0]:
+                    best = (d, p)
+            if best:
+                who = best[1]
+        seq.append((k, t, who))
+    runs, i = [], 0
+    while i < len(seq):
+        j = i
+        while (j + 1 < len(seq) and seq[i][2] is not None and seq[j + 1][2] is not None
+               and seq[j + 1][2][6] == seq[i][2][6]):
+            j += 1
+        if seq[i][2] is not None and j - i + 1 >= min_frames:
+            k, _, who = seq[(i + j) // 2]
+            runs.append({"k": k, "t0": seq[i][1], "t1": seq[j][1], "tid": who[6],
+                         "box": [round(v) for v in who[1:5]], "first": [round(v) for v in seq[i][2][1:5]],
+                         "last": [round(v) for v in seq[j][2][1:5]], "n": j - i + 1})
+        i = j + 1
+    return runs
+
+
+def read_holder_colors(doc, runs, video):
+    """Reads the middle frame of each hold from the film and stores the holder's torso color
+    (median of the brighter half of the torso pixels, so black sleeves and shadows don't pull
+    it) and a stripe count for spotting referees. Reads the film once, front to back, keeping
+    only the frames needed (about 90 s per game)."""
+    import cv2
+    import numpy as np
+
+    cap = cv2.VideoCapture(str(video))
+    vfps = cap.get(cv2.CAP_PROP_FPS)
+    by_k = {r["k"]: r for r in runs}
+    want = sorted((round(doc["frames"][k][0] * vfps), k) for k in by_k)
+    if not want:
+        return
+    vi = max(0, want[0][0] - 1)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, vi)
+    wi = 0
+    while wi < len(want):
+        target, k = want[wi]
+        if target - vi > 300:  # a long jump: seek instead of reading every frame
+            cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+            vi = target
+        while vi < target:
+            cap.grab()
+            vi += 1
+        ok, img = cap.read()
+        vi += 1
+        while wi < len(want) and want[wi][0] < vi:
+            r = by_k[want[wi][1]]
+            wi += 1
+            if not ok:
+                continue
+            x0, y0, x1, y1 = r["box"]
+            w, h = x1 - x0, y1 - y0
+            crop = img[int(y0 + 0.2 * h):int(y0 + 0.5 * h), int(x0 + 0.25 * w):int(x1 - 0.25 * w)]
+            if crop.size == 0:
+                continue
+            lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(float)
+            bright = lab[:, 0] >= np.percentile(lab[:, 0], 50)
+            r["lab"] = np.median(lab[bright], axis=0).round(1).tolist()
+            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY).astype(float)
+            ww = gray.shape[1]
+            mid = gray[:, ww // 4: ww - ww // 4] if ww >= 8 else gray
+            r["dark"] = round(float((mid < 70).mean()), 3)
+            light = (mid > 110).astype(np.int8)
+            r["stripes"] = round(float(np.abs(np.diff(light, axis=1)).sum(axis=1).mean()), 2) if mid.shape[1] > 1 else 0.0
+
+
+def label_holders(doc, runs, groups):
+    """Team for each hold. The two jersey colors are learned from this game's holders (two
+    color groups over all holds), and each group is named by the tracker's team split of the
+    players in it, which is right most of the time. A hold's own color beats its track's team:
+    tracks sometimes switch players. Striped shirts are referees (no team). Holds without a
+    color (no film) fall back to the track's team."""
+    import cv2
+    import numpy as np
+
+    colored = [r for r in runs if "lab" in r]
+    team_of_track = lambda tid: groups.get(doc["tracks"].get(str(tid), {}).get("group"))
+    if len(colored) >= 20:
+        X = np.array([[0.3 * r["lab"][0], r["lab"][1], r["lab"][2]] for r in colored], dtype=np.float32)
+        crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.1)
+        cv2.setRNGSeed(0)
+        _, lab, cent = cv2.kmeans(X, 2, None, crit, 10, cv2.KMEANS_PP_CENTERS)
+        lab = lab.ravel()
+        votes = np.zeros((2, 2))
+        for r, c in zip(colored, lab):
+            t = team_of_track(r["tid"])
+            if t:
+                votes[c][0 if t == "Valley" else 1] += 1
+        # Name the groups so the two together agree best with the tracker.
+        same = votes[0][0] + votes[1][1] >= votes[0][1] + votes[1][0]
+        names = {0: "Valley", 1: "Opponent"} if same else {0: "Opponent", 1: "Valley"}
+        d = np.linalg.norm(X[:, None, :] - cent[None], axis=2)
+        for r, c, dd in zip(colored, lab, d):
+            r["team"] = names[int(c)]
+            r["sure"] = bool(abs(dd[0] - dd[1]) >= 6)
+    for r in runs:
+        if r.get("stripes", 0) >= REF_STRIPES and r.get("dark", 0) >= REF_DARK:
+            r["team"], r["ref"] = None, True
+    # One player's color can read differently from hold to hold: the torso crop catches the floor
+    # or the defender pressed against him. So each track votes once over all its holds, with the
+    # tracker's own team for the whole track as one more vote, and every hold takes the result.
+    votes = {}
+    for r in runs:
+        if r.get("ref") or r.get("team") is None:
+            continue
+        v = votes.setdefault(r["tid"], {"Valley": 0.0, "Opponent": 0.0})
+        v[r["team"]] += 1.0 if r.get("sure") else 0.5
+    for r in runs:
+        if r.get("ref"):
+            continue
+        v = dict(votes.get(r["tid"], {"Valley": 0.0, "Opponent": 0.0}))
+        t = team_of_track(r["tid"])
+        if t:
+            v[t] += 1.0
+        total = v["Valley"] + v["Opponent"]
+        if total == 0:
+            r["team"], r["sure"] = None, False
+            continue
+        r["team"] = "Valley" if v["Valley"] > v["Opponent"] else "Opponent" if v["Opponent"] > v["Valley"] else (t or None)
+        r["sure"] = r["team"] is not None and max(v.values()) / total >= 0.7 and total >= 1.5
+
+    def track_team(tid):
+        """The voted team for any track, including ones never seen in a sustained hold."""
+        v = dict(votes.get(tid, {"Valley": 0.0, "Opponent": 0.0}))
+        t = team_of_track(tid)
+        if t:
+            v[t] += 1.0
+        if v["Valley"] == v["Opponent"]:
+            return t
+        return "Valley" if v["Valley"] > v["Opponent"] else "Opponent"
+    return track_team
+
+
+def possession_timeline(doc, runs, sides, info, window, half_break, fps=10):
+    """Team with the ball, second by second, as runs [t0, t1, team]. Each frame of a hold is
+    evidence for the holder's team, and which basket is on screen is weak evidence for the team
+    attacking it. A new possession costs SWITCH_COST, so a one-off wrong color or a defender's
+    brief touch doesn't flip it. Solved per half for the best overall sequence (Viterbi)."""
+    import numpy as np
+
+    start, end = window
+    halves = [(start, half_break[0]), (half_break[1], end)] if half_break else [(start, end)]
+    side_at = {round(t, 1): s for t, s in sides}
+    out = []
+    for h0, h1 in halves:
+        n = int(round((h1 - h0) * fps)) + 1
+        ev = np.zeros((n, 2))  # evidence for [Valley, Opponent]
+        for r in runs:
+            if r.get("team") is None or r["t1"] < h0 or r["t0"] > h1:
+                continue
+            col = 0 if r["team"] == "Valley" else 1
+            a, b = max(0, int(round((r["t0"] - h0) * fps))), min(n - 1, int(round((r["t1"] - h0) * fps)))
+            ev[a:b + 1, col] += HOLD_WEIGHT if r.get("sure") else HOLD_WEAK
+        for i in range(n):
+            s = side_at.get(round(h0 + i / fps, 1))
+            if s:
+                ev[i, 0 if team_at(s, h0 + i / fps, info) == "Valley" else 1] += CAMERA_WEIGHT
+        score = ev[0].copy()
+        back = np.zeros((n, 2), dtype=np.int8)
+        for i in range(1, n):
+            new = np.empty(2)
+            for st_ in (0, 1):
+                stay, switch = score[st_], score[1 - st_] - SWITCH_COST
+                back[i, st_] = st_ if stay >= switch else 1 - st_
+                new[st_] = max(stay, switch) + ev[i, st_]
+            score = new
+        path = np.empty(n, dtype=np.int8)
+        path[-1] = int(np.argmax(score))
+        for i in range(n - 1, 0, -1):
+            path[i - 1] = back[i, path[i]]
+        i0 = 0
+        for i in range(1, n + 1):
+            if i == n or path[i] != path[i0]:
+                out.append([round(h0 + i0 / fps, 1), round(h0 + (i - 1) / fps, 1),
+                            "Valley" if path[i0] == 0 else "Opponent"])
+                i0 = i
+    return out
+
+
+def merge_blips(timeline, shots):
+    """Removes touches: a possession under BLIP seconds with no shot by that team, sitting between
+    two possessions of the other team, is a deflection or a defender's hand on the ball (or a
+    wrong color), not a change of possession. The three runs become one."""
+    out = [list(r) for r in timeline]
+    changed = True
+    while changed:
+        changed = False
+        for i in range(1, len(out) - 1):
+            a, b, c = out[i - 1], out[i], out[i + 1]
+            if (a[2] == c[2] != b[2] and b[1] - b[0] < BLIP and b[0] - a[1] <= 1.0 and c[0] - b[1] <= 1.0
+                    and not any(s["team"] == b[2] and b[0] - 0.5 <= s["t"] <= b[1] + 1.0 for s in shots)):
+                out[i - 1:i + 2] = [[a[0], c[1], a[2]]]
+                changed = True
+                break
+    return out
+
+
+def team_at_time(timeline, t):
+    for t0, t1, team in timeline:
+        if t0 <= t <= t1 + 0.05:
+            return team
+    return None
+
+
+def possession_events_v2(doc, split, window, half_break, runs, timeline):
+    """Rebounds from the first player to get the ball after each live miss; turnovers and
+    steals from possession changes nothing else explains; all timed at the real moment."""
+    shots = live_shots(split["shots"])
+    visits = rim_visits(doc)
+    holds = sorted((r for r in runs if r.get("team") or r.get("ref")), key=lambda r: r["t0"])
+    events = []
+    # Rebounds.
+    for i, s in enumerate(shots):
+        if not s["live_miss"]:
+            continue
+        nxt = shots[i + 1] if i + 1 < len(shots) else None
+        # Only holds whose team is clear count here: one wrong color decides a rebound alone.
+        first = next((r for r in holds if s["t"] + 0.3 <= r["t0"] <= s["t"] + REB_LOOK
+                      and (r.get("ref") or r.get("sure"))), None)
+        again = (nxt is not None and nxt["team"] == s["team"] and nxt["basket"] == s["basket"]
+                 and nxt["t"] - s["t"] <= REB_LOOK)
+        if again and not any(r.get("sure") and r.get("team") == other(s["team"]) and s["t"] + 0.3 <= r["t0"] < nxt["t"]
+                             for r in holds):
+            # The same team shot again at the same basket and the other team never clearly had
+            # the ball: an offensive rebound (putbacks are often too quick to count as a hold).
+            events.append({"type": "oreb", "team": s["team"], "t": s["t"], "shot_t": s["t"]})
+            continue
+        if first is not None and first.get("ref"):
+            continue  # an official has it first: the ball went out of bounds (a team rebound)
+        if first is not None:
+            team = first["team"]
+            t = first["t0"]
+        else:
+            team, t = other(s["team"]), s["t"]  # nobody seen: the defense usually ends up with it
+        events.append({"type": "oreb" if team == s["team"] else "dreb", "team": team, "t": t, "shot_t": s["t"]})
+    rebs = {round(e["shot_t"], 1): e for e in events}
+    # Turnovers: a change of possession with no make, defensive rebound or dead-ball reason.
+    for prev_run, run in zip(timeline, timeline[1:]):
+        if run[0] - prev_run[1] > 1.0:
+            continue  # halftime gap
+        a, change = prev_run[2], run[0]
+        mine = [s for s in shots if prev_run[0] - 1 <= s["t"] <= change + 0.5 and s["team"] == a]
+        last = mine[-1] if mine else None
+        if last and last["made"] and change - last["t"] <= 12:
+            continue  # scored, then the other team inbounds
+        if last and last["live_miss"]:
+            e = rebs.get(round(last["t"], 1))
+            if e and e["type"] == "dreb" and abs(e["t"] - change) <= REB_LOOK:
+                continue  # defensive rebound
+        if last and not last["live_miss"] and not last["made"] and change - last["t"] <= DREB_DELAY:
+            continue  # free throws or a fouled shot: the ball changes by rule
+        if any(s["kind"] == "FT" and change - 5 <= s["t"] <= change + 30 for s in shots):
+            continue  # a foul and free throws: the ball changes by rule, not a turnover
+        if stopped_before(doc, change, LONG_STOP + 1) >= LONG_STOP:
+            continue  # quarter break or jump ball
+        if players_around(doc, change - 8, change + 2) < MIN_PLAYERS:
+            continue  # timeout: the camera wanders over an empty floor
+        since = last["t"] + 2 if last else prev_run[0]
+        if any(since <= v <= change for v in visits):
+            continue  # the ball went to the rim: likely a shot the finder missed, not a turnover
+        ref_before = any(r.get("ref") and change - 6 <= r["t0"] <= change + 0.5 for r in holds)
+        dead = ref_before or ref_handled(doc, change - 6, change + 1.0)
+        events.append({"type": "to", "team": a, "t": change, "live": not dead})
+        if not dead:
+            events.append({"type": "stl", "team": other(a), "t": change})
+    return events
+
+
+def assists_v2(split, runs):
+    """A made field goal is assisted when the hold just before the shooter's catch belongs to a
+    teammate (a different player, at least a body height away), the ball went straight from one
+    to the other (no other hold in between, at most PASS_AIR_MAX apart), the pass ended within ASSIST_WINDOW of the shot, and the
+    shooter didn't hold the ball long (a long dribble-drive is his own basket)."""
+    holds = sorted((r for r in runs if r.get("team")), key=lambda r: r["t0"])
+    out = []
+    for s in split["shots"]:
+        if s["kind"] != "FG" or not s["made"]:
+            continue
+        before = [r for r in holds if r["t1"] <= s["t"] and r["t1"] >= s["t"] - 3.0]
+        if not before:
+            continue
+        sh = None
+        if s.get("shooter_track") is not None:
+            mine = [r for r in before if r["tid"] == s["shooter_track"]]
+            sh = mine[-1] if mine else None
+        if sh is None:
+            mine = [r for r in before if r["team"] == s["team"]]
+            sh = mine[-1] if mine else None
+        if sh is None or sh["t1"] - sh["t0"] > SHOOTER_HOLD_MAX:
+            continue
+        earlier = [r for r in holds if r["t1"] < sh["t0"] and r is not sh]
+        if not earlier:
+            continue
+        p = earlier[-1]
+        if p["team"] != s["team"]:
+            continue  # the ball came from the other team: a rebound or a steal, not a pass
+        if sh["t0"] - p["t1"] > PASS_AIR_MAX or s["t"] - p["t1"] > ASSIST_WINDOW:
+            continue
+        # The same track id on both holds is allowed: the tracker sometimes hands one player's id
+        # to the teammate who catches the pass. The distance check below still rules out a
+        # player simply holding on.
+        pb, sb = p["last"], sh["first"]
+        h = max(pb[3] - pb[1], sb[3] - sb[1])
+        if abs((pb[0] + pb[2]) / 2 - (sb[0] + sb[2]) / 2) + abs(pb[3] - sb[3]) < h:
+            continue  # same spot: probably one player's track broke, not a pass
+        out.append({"type": "ast", "team": s["team"], "t": p["t1"], "shot_t": s["t"],
+                    "passer_track": p["tid"], "shooter_track": sh["tid"]})
+    return out
+
+
 HUDL_KEYS = {"oreb": "oreb", "dreb": "dreb", "to": "to", "stl": "stl", "ast": "ast"}
 
 
@@ -387,11 +749,64 @@ def sheet(video, events, out, title):
         cv2.imwrite(str(out), img, [cv2.IMWRITE_JPEG_QUALITY, 75])
 
 
+def ball_point(doc, t):
+    """The ball's center near time t (or None)."""
+    for dk in (0, 1, -1, 2, -2, 3, -3):
+        boxes = frame_at(doc, t + dk / doc["fps"])
+        balls = [b for b in boxes if b[0] == 0 and b[5] >= 0.2]
+        if balls:
+            b = max(balls, key=lambda b: b[5])
+            return (b[1] + b[3]) / 2, (b[2] + b[4]) / 2
+    return None
+
+
+def zoom_sheet(video, doc, items, out, title, offsets=(-1.0, 0.0, 1.0), half=200):
+    """One row per item: zoomed crops around the ball at each offset from the item's time, with
+    the item's label. Full frames were too small to tell who touched the ball."""
+    import cv2
+    import numpy as np
+
+    cap = cv2.VideoCapture(str(video))
+    W, H = doc["frame_size"]
+    rows = []
+    for it in items:
+        tiles = []
+        for dt in offsets:
+            t = it["t"] + dt
+            cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
+            ok, img = cap.read()
+            pt = ball_point(doc, t) or (W / 2, H / 2)
+            if not ok:
+                img = np.zeros((H, W, 3), np.uint8)
+            x, y = int(min(max(pt[0], half), W - half)), int(min(max(pt[1], half), H - half))
+            crop = cv2.resize(img[y - half:y + half, x - half:x + half], (360, 360))
+            cv2.circle(crop, (int((pt[0] - x + half) * 360 / (2 * half)), int((pt[1] - y + half) * 360 / (2 * half))),
+                       14, (0, 255, 255), 2)
+            tiles.append(crop)
+        row = np.hstack(tiles)
+        m, s_ = divmod(int(it["t"]), 60)
+        cv2.putText(row, f"{it.get('n', '')} {m}:{s_:02d} {it['label']}", (8, 28), 0, 0.8, (0, 255, 255), 2)
+        rows.append(row)
+    if rows:
+        img = np.vstack(rows)
+        cv2.putText(img, title, (8, img.shape[0] - 10), 0, 0.7, (255, 255, 255), 2)
+        cv2.imwrite(str(out), img, [cv2.IMWRITE_JPEG_QUALITY, 75])
+
+
+def count(events):
+    counts = {team: {k: 0 for k in HUDL_KEYS} for team in ("Valley", "Opponent")}
+    for e in events:
+        counts[e["team"]][e["type"]] += 1
+    return counts
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("tracks", type=Path)
     parser.add_argument("--game", required=True)
-    parser.add_argument("--video", type=Path)
+    parser.add_argument("--video", type=Path, help="reads holders' jersey colors (cached) and, with --sheets, makes check sheets")
+    parser.add_argument("--method", choices=("v1", "v2"), default="v2")
+    parser.add_argument("--sheets", action="store_true", help="write zoomed check sheets (needs --video)")
     args = parser.parse_args()
     doc = json.loads(args.tracks.read_text())
     split = json.loads(args.tracks.with_suffix(".split.json").read_text())
@@ -401,16 +816,40 @@ def main():
     half_break = wdoc.get("halftime")
     games = yaml.safe_load((ML / "games.yaml").read_text())["games"]
     game = next(g for g in games if g["id"] == args.game)
+    groups = jersey_groups(doc, game)
+    info = {"halftime": split["halftime"], "valley_basket_first_half": split["valley_basket_first_half"]}
 
-    runs, events = possession_events(doc, split, window, half_break)
-    holds = holders(doc, *window)
-    events += assists(doc, split, holds, jersey_groups(doc, game))
+    if args.method == "v1":
+        runs_v1, events = possession_events(doc, split, window, half_break)
+        events += assists(doc, split, holders(doc, *window), groups)
+        timeline = [[r[0], r[1], r[3]] for r in runs_v1]
+        hruns = []
+    else:
+        cache = args.tracks.with_suffix(".holders.json")
+        hruns = None
+        if cache.exists():
+            cached = json.loads(cache.read_text())
+            if cached.get("window") == window:
+                hruns = cached["runs"]
+        if hruns is None:
+            hruns = hold_runs(doc, *window)
+            if args.video:
+                read_holder_colors(doc, hruns, args.video)
+                cache.write_text(json.dumps({"window": window, "runs": hruns}))
+        track_team = label_holders(doc, hruns, groups)
+        timeline = possession_timeline(doc, hruns, side_per_frame(doc), info, window, half_break)
+        timeline = merge_blips(timeline, live_shots(split["shots"]))
+        events = possession_events_v2(doc, split, window, half_break, hruns, timeline)
+        # Assists use shorter holds too (a catch-and-shoot lasts a few frames), each with its
+        # track's voted team.
+        quick = hold_runs(doc, *window, min_frames=2)
+        for r in quick:
+            r["team"] = track_team(r["tid"])
+        events += assists_v2(split, quick)
     events.sort(key=lambda e: e["t"])
 
-    counts = {team: {k: 0 for k in HUDL_KEYS} for team in ("Valley", "Opponent")}
-    for e in events:
-        counts[e["team"]][e["type"]] += 1
-    print(f"{len(runs)} possessions at one basket ({sum(r[3] == 'Valley' for r in runs)} Valley)")
+    counts = count(events)
+    print(f"{len(timeline)} possessions ({sum(r[2] == 'Valley' for r in timeline)} Valley), method {args.method}")
     truth = hudl(args.game)
     print(f"{'':10}" + "".join(f"{k:>12}" for k in HUDL_KEYS))
     for team in ("Valley", "Opponent"):
@@ -419,16 +858,35 @@ def main():
             row += f"{counts[team][k]:>7}" + (f" ({truth[team][hk]:>2})" if truth else "")
         print(row)
     out = args.tracks.with_suffix(".possession.json")
-    out.write_text(json.dumps({"runs": runs, "events": events, "counts": counts}, indent=1))
+    out.write_text(json.dumps({"method": args.method, "timeline": timeline, "events": events, "counts": counts}, indent=1))
     print("wrote", out)
-    if args.video:
+    if args.sheets and args.video:
         random.seed(0)
         for kind in HUDL_KEYS:
             group = [e for e in events if e["type"] == kind]
             pick = sorted(random.sample(group, min(10, len(group))), key=lambda e: e["t"])
-            path = args.tracks.with_name(args.tracks.stem + f".{kind}.jpg")
-            sheet(args.video, pick, path, f"10 random {kind}")
+            items = [{"t": e["t"], "n": i + 1, "label": f"{kind} {e['team']}" + (f" (shot {e['shot_t']:.0f}s)" if "shot_t" in e else "")}
+                     for i, e in enumerate(pick)]
+            path = args.tracks.with_name(args.tracks.stem + f".{args.method}.{kind}.jpg")
+            zoom_sheet(args.video, doc, items, path, f"10 random {kind}, {args.method} (crops 1 s before, at, 1 s after)")
             print("wrote", path)
+        live = [r for r in timeline if r[1] - r[0] >= 2]
+        random.seed(1)
+        moments = []
+        while len(moments) < 30 and live:
+            r = random.choice(live)
+            t = round(random.uniform(r[0], r[1]), 1)
+            if players_around(doc, t - 1, t + 1) >= MIN_PLAYERS:
+                moments.append(t)
+        moments.sort()
+        for part in range(3):
+            chunk = moments[part * 10:(part + 1) * 10]
+            items = [{"t": t, "n": part * 10 + i + 1, "label": f"has ball: {team_at_time(timeline, t)}"} for i, t in enumerate(chunk)]
+            path = args.tracks.with_name(args.tracks.stem + f".{args.method}.poss{part + 1}.jpg")
+            zoom_sheet(args.video, doc, items, path, "who has the ball (crops 0.5 s before, at, 0.5 s after)",
+                       offsets=(-0.5, 0.0, 0.5))
+            print("wrote", path)
+        (args.tracks.with_suffix(f".{args.method}.moments.json")).write_text(json.dumps(moments))
 
 
 if __name__ == "__main__":
