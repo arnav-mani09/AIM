@@ -203,6 +203,8 @@ export function startFilmUpload(
     filename: string;
     content_type: string;
     size_bytes: number;
+    valley_jersey?: string | null;
+    opponent_jersey?: string | null;
   }
 ): Promise<FilmUploadStarted> {
   return request<FilmUploadStarted>(`/api/v1/teams/${teamId}/film/uploads`, token, {

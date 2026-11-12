@@ -34,6 +34,8 @@ export type ReviewData = {
   status: "pending" | "ready" | "failed";
   events: ShotEvent[];
   box_score: { valley: TeamLine; opponent: TeamLine } | null;
+  /** True when AIM had no jersey colors and guessed which team is Valley. */
+  teams_guessed?: boolean;
 };
 
 export type EventPatch = Partial<Pick<ShotEvent, "made" | "team" | "shot_type" | "player_number" | "status" | "t">>;
@@ -118,6 +120,14 @@ export function addReviewShot(token: string, teamId: number, uploadId: number, s
 export function rerunReviewEvents(token: string, teamId: number, uploadId: number): Promise<ReviewData> {
   return withMock(
     () => call<ReviewData>(`${eventsPath(teamId, uploadId)}/rerun`, token, { method: "POST" }),
+    mockFetchEvents,
+  );
+}
+
+/** Flip Valley and Opponent on every shot, for when AIM picked the wrong team. */
+export function swapReviewTeams(token: string, teamId: number, uploadId: number): Promise<ReviewData> {
+  return withMock(
+    () => call<ReviewData>(`${eventsPath(teamId, uploadId)}/swap-teams`, token, { method: "POST" }),
     mockFetchEvents,
   );
 }

@@ -19,6 +19,7 @@ import {
   patchReviewEvent,
   rerunReviewEvents,
   ReviewData,
+  swapReviewTeams,
   ShotEvent,
   ShotType,
   TeamLine,
@@ -101,6 +102,21 @@ export default function ReviewPage() {
         setEvents(result.events);
       })
       .catch((err) => setActionError(err instanceof Error ? err.message : "Couldn't start finding shots."));
+  }, [token, teamId, uploadId]);
+
+  // Swap teams: flip Valley and Opponent on every shot when AIM picked the wrong team.
+  const [swapping, setSwapping] = useState(false);
+  const swapTeams = useCallback(() => {
+    if (!token) return;
+    setActionError(null);
+    setSwapping(true);
+    swapReviewTeams(token, teamId, uploadId)
+      .then((result) => {
+        setData(result);
+        setEvents(result.events);
+      })
+      .catch((err) => setActionError(err instanceof Error ? err.message : "Couldn't swap the teams."))
+      .finally(() => setSwapping(false));
   }, [token, teamId, uploadId]);
 
   // Keep checking while AIM is still working on the film.
@@ -286,6 +302,31 @@ export default function ReviewPage() {
           </button>
         </div>
       )}
+
+      {/* Swap teams: a banner when AIM guessed which team is yours, a small link otherwise. */}
+      {data?.status === "ready" &&
+        (data.teams_guessed ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
+            <p>AIM guessed which team is yours. Wrong? Swap teams.</p>
+            <button
+              onClick={swapTeams}
+              disabled={swapping}
+              className="rounded-2xl bg-ink px-4 py-2 font-semibold text-white disabled:opacity-60"
+            >
+              {swapping ? "Swapping…" : "Swap teams"}
+            </button>
+          </div>
+        ) : (
+          <div className="flex justify-end">
+            <button
+              onClick={swapTeams}
+              disabled={swapping}
+              className="text-xs text-subtext underline hover:text-ink disabled:opacity-60"
+            >
+              {swapping ? "Swapping…" : "Wrong team labels? Swap teams"}
+            </button>
+          </div>
+        ))}
 
       {loadError ? (
         <section className="section-card">

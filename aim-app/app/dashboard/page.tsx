@@ -28,6 +28,21 @@ import { FilmUploadError, FilmUploadSession, uploadFilm } from "@/lib/filmUpload
 const formatGigabytes = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 
 // useSearchParams needs a Suspense boundary for the page to prerender.
+const JERSEY_COLORS = [
+  { value: "white", label: "White" },
+  { value: "black", label: "Black" },
+  { value: "gray", label: "Gray" },
+  { value: "navy", label: "Navy" },
+  { value: "light blue", label: "Light blue" },
+  { value: "royal blue", label: "Royal blue" },
+  { value: "red", label: "Red" },
+  { value: "maroon", label: "Maroon" },
+  { value: "green", label: "Green" },
+  { value: "gold", label: "Gold / yellow" },
+  { value: "orange", label: "Orange" },
+  { value: "purple", label: "Purple" },
+];
+
 export default function DashboardPage() {
   return (
     <Suspense>
@@ -68,6 +83,8 @@ function Dashboard() {
     title: string;
     notes: string | null;
     teamId: number;
+    valleyJersey: string | null;
+    opponentJersey: string | null;
     session: FilmUploadSession | null;
   } | null>(null);
   const filmAbortRef = useRef<AbortController | null>(null);
@@ -192,6 +209,8 @@ function Dashboard() {
         file: job.file,
         title: job.title,
         notes: job.notes,
+        valleyJersey: job.valleyJersey,
+        opponentJersey: job.opponentJersey,
         resume: job.session,
         signal: controller.signal,
         onSession: (session) => setPendingFilm((prev) => (prev ? { ...prev, session } : prev)),
@@ -238,6 +257,8 @@ function Dashboard() {
       title: String(formData.get("title") ?? ""),
       notes: (formData.get("notes") as string | null) || null,
       teamId: filmTeamId,
+      valleyJersey: (formData.get("valley_jersey") as string | null) || null,
+      opponentJersey: (formData.get("opponent_jersey") as string | null) || null,
       session: null,
     });
     if (uploaded && formElement.isConnected) formElement.reset();
@@ -423,6 +444,20 @@ function Dashboard() {
                   placeholder="Quarter, opponent, angle…"
                 />
               </label>
+              {/* Jersey colors tell AIM which team is yours. Values match the worker's color names. */}
+              {(["valley_jersey", "opponent_jersey"] as const).map((name) => (
+                <label key={name} className="flex flex-col gap-2 text-sm">
+                  {name === "valley_jersey" ? "Your team's jersey color" : "Other team's jersey color"}
+                  <select name={name} defaultValue="" className="rounded-xl border border-stroke px-3 py-2 text-ink">
+                    <option value="">Not sure</option>
+                    {JERSEY_COLORS.map((color) => (
+                      <option key={color.value} value={color.value}>
+                        {color.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
               <div className="md:col-span-2 flex items-center gap-3">
                 <button
                   type="submit"

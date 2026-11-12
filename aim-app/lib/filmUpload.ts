@@ -26,6 +26,9 @@ export type FilmUploadOptions = {
   title: string;
   notes?: string | null;
   gameId?: number | null;
+  /** Jersey color names, so AIM knows which team is yours. */
+  valleyJersey?: string | null;
+  opponentJersey?: string | null;
   /** Pass the session from a failed attempt to upload only the missing parts. */
   resume?: FilmUploadSession | null;
   onSession?: (session: FilmUploadSession) => void;
@@ -52,6 +55,8 @@ export async function uploadFilm(options: FilmUploadOptions): Promise<GameUpload
         filename: file.name,
         content_type: file.type || "video/mp4",
         size_bytes: file.size,
+        valley_jersey: options.valleyJersey ?? null,
+        opponent_jersey: options.opponentJersey ?? null,
       });
       session = {
         uploadId: started.upload.id,
