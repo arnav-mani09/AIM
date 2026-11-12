@@ -11,7 +11,13 @@ How it works:
    you look, until the shooter's gather, where it stops dropping. The player holding it there is the
    shooter, and the bottom of their box at that moment is where their feet were (on the floor, before
    the jump). Stopping at the first player the ball overlaps instead picks players under the basket,
-   because from a high camera the ball's flight passes over them.
+   because from a high camera the ball's flight passes over them. Three guards on top of that:
+   - Players in the other team's jersey group are skipped (the shot's team comes from the basket, and
+     a defender's box often covers the ball at the gather).
+   - If a different player has the ball in the top half of their box for two frames in a row just
+     before it flies, that player is the shooter (the apex walk can run back into a pass).
+   - If the ball stays with the shooter more than half a second after the gather, it was a drive:
+     the feet are read just before the last frame they had the ball, not at the dribble far out.
 2. Court lines without a court model. The camera pans and zooms, but the rim is in every shot frame.
    Shift and scale each shot frame so its rim lands at the same spot with the same width. Painted
    lines then stack up across a game's shots while players blur out, so averaging the thin dark lines
@@ -20,8 +26,21 @@ How it works:
    strongest line around the basket, keeping the radius smooth from one ray to the next.
 4. Per shot, compare the feet's distance from that point with the arc's distance in the same direction.
    Then look for the painted line in the shot's own frame near the expected spot, which corrects for
-   the small shifts a camera pan causes, and use it when it's clear.
-Rules and image geometry, not a model. Checked against Hudl 3PA counts and by eye.
+   the small shifts a camera pan causes, and use it when it's clear. The shooter's box is cleared from
+   the line map first: dark shoes are thin dark marks too, and used to be read as the line, which made
+   any shooter near the arc look like they were standing on it (a 2).
+Rules and image geometry, not a model.
+
+Status (2026-11-11): checked with three_point_eval.py on Mitty and Riordan. Per-shot truth: every made
+field goal from the score bug (2 or 3 points), plus 8 misses on Mitty judged by eye on zoomed sheets;
+55 calls in all (31 Mitty, 24 Riordan). Right calls went from 46 to 50 of 55. 3PA vs Hudl:
+    Mitty    Valley 14 -> 17 (Hudl 16), Opponent 21 -> 22 (Hudl 23)
+    Riordan  Valley 17 -> 14 (Hudl 14), Opponent 23 -> 19 (Hudl 21)
+Known misses: 10 field goals (6 Mitty, 4 Riordan) have no takeoff at all, because the ball is only seen
+near the rim or the shooter is off screen; they stay 2s, and the 3 checked were all 3s (two of them made
+Opponent 3s at Mitty). A corner shooter on the line (Mitty 63:05) reads as 3 ft outside. A defender in an
+"unsure" jersey group can still be taken for the shooter (Riordan 37:46). Points are not yet closer to
+Hudl overall: the rest of the gap is makes the shot finder misses or invents, not the 2 or 3 call.
 """
 
 import argparse
@@ -40,6 +59,10 @@ FLOOR_TOP = 1.75         # the floor (and the far side of the arc) starts this m
 GATHER_LOOKBACK = 3.0    # seconds to follow the ball back from the rim
 SEARCH = 1.2             # rim widths either side of the average arc to look for the line in a shot's own frame
 ARC_FT = 19.75           # high school 3-point distance from the center of the basket (NFHS)
+REFINE = "mask"          # line in the shot's own frame: "ray" through the feet, or "mask" (shooter's box cleared first)
+DRIVE_GAP = 0.5          # seconds the ball stays with the shooter after the gather that make it a drive (0: off)
+USE_TEAM = True          # skip players in the other team's jersey group when looking for the shooter
+USE_RELEASE = True       # prefer the player holding the ball just before it flies (see release_holder)
 MARGIN_FT = 0.5          # feet within this many feet past the arc count as on the line: a 2
 BX, BY = RX, RY + int(FLOOR_BELOW * SC)
 _T = np.linspace(0, 2 * np.pi, 160, endpoint=False)
@@ -87,9 +110,13 @@ def ball_path(doc, t):
     return path
 
 
-def holder(boxes, x, y):
+def holder(boxes, x, y, groups=None, other=None):
+    """The player holding the ball at (x, y): the box it's in, nearest its middle. Players whose
+    track is in the other team's jersey group are skipped (a defender's box often covers the ball too)."""
     best = None
     for p in players(boxes):
+        if other is not None and groups.get(str(p[6]), {}).get("group") == other:
+            continue
         x0, y0, x1, y1 = p[1:5]
         w, h = x1 - x0, y1 - y0
         if x0 - 0.15 * w <= x <= x1 + 0.15 * w and y0 - 0.1 * h <= y <= y1:
@@ -99,10 +126,12 @@ def holder(boxes, x, y):
     return best[1] if best else None
 
 
-def find_takeoff(doc, s):
+def find_takeoff(doc, s, other=None):
     """Shooter box, rim box and time at the gather. Falls back to shot_split's shooter when the
     ball can't be followed back to a holder. None if neither works."""
-    tk = gather_takeoff(doc, s)
+    tk = gather_takeoff(doc, s, other)
+    if tk is None and other is not None:
+        tk = gather_takeoff(doc, s)
     if tk is None and s.get("shooter_track") is not None:
         tk = feet_of(doc, s, s["shooter_track"], s["t"] - 0.3, back=1.5)
         if tk:
@@ -130,7 +159,7 @@ def feet_of(doc, s, tid, t, back):
             "rim_at_take": [round(v) for v in rim[1:5]], "feet": [round((me[1] + me[3]) / 2, 1), round(me[4], 1)]}
 
 
-def gather_takeoff(doc, s):
+def gather_takeoff(doc, s, other=None):
     path = ball_path(doc, s["t"])
     if len(path) < 3:
         return None
@@ -147,21 +176,77 @@ def gather_takeoff(doc, s):
         elif y < lowest - 25 and k - k_low >= 2:
             break
     # The holder at the gather, or at the nearest frame around it where someone holds the ball.
+    groups = doc.get("tracks", {})
     for dk in (0, 1, -1, 2, -2, 3):
         k = k_low + dk
         if not 0 <= k < len(path):
             continue
         tt, x, y = path[k]
-        p = holder(frame_at(doc, tt), x, y)
+        p = holder(frame_at(doc, tt), x, y, groups, other)
         if p is not None:
             break
     else:
+        p = None
+    # The player with the ball in their hands just before it flies, if that's someone else: the
+    # apex walk can run past the shot into a pass or a dribble before a drive (Riordan 89:40), or
+    # the ball can sit over a defender's box at the gather (Mitty 23:16).
+    rel = release_holder(doc, path[:k_low + 4], groups, other) if USE_RELEASE else None
+    if rel is not None and (p is None or rel[0] != p[6]):
+        tk = feet_of(doc, s, rel[0], rel[1] + 2 / doc["fps"], back=0.5)
+        if tk:
+            tk["shooter_from"] = "ball in hands before release"
+        return tk
+    if p is None:
         return None
+    # A drive: the ball stays with the same player well after the "gather" (a dribble low point
+    # far out), so the jump came later and closer in. Read the feet just before the last frame
+    # they had the ball instead (Riordan 59:35, 60:13).
+    if DRIVE_GAP:
+        last = last_with(doc, path[:k_low], p[6])
+        if last is not None and last - tt > DRIVE_GAP:
+            tk = feet_of(doc, s, p[6], last + 1 / doc["fps"], back=0.4)
+            if tk:
+                tk["shooter_from"] = "ball in hands after a drive"
+            return tk
     # Feet: lowest box bottom of this player around the gather (on the floor before the jump).
     tk = feet_of(doc, s, p[6], tt + 2 / doc["fps"], back=0.4)
     if tk:
         tk["shooter_from"] = "ball at the gather"
     return tk
+
+
+def last_with(doc, path, tid):
+    """The latest time on the path (it runs back from the rim) when the ball is in this player's box."""
+    for tt, x, y in path:
+        for p in players(frame_at(doc, tt)):
+            if p[6] == tid:
+                x0, y0, x1, y1 = p[1:5]
+                w, h = x1 - x0, y1 - y0
+                if x0 - 0.15 * w <= x <= x1 + 0.15 * w and y0 - 0.1 * h <= y <= y1:
+                    return tt
+    return None
+
+
+def release_holder(doc, path, groups, other):
+    """(track, time) of the first player, walking back from the rim, with the ball in the top half
+    of their box in two frames in a row. A ball in flight crosses a player's box in a frame or so;
+    in the shooter's hands it stays. Players in the other team's jersey group are skipped."""
+    prev = None
+    for tt, x, y in path:
+        here = set()
+        for p in players(frame_at(doc, tt)):
+            if other is not None and groups.get(str(p[6]), {}).get("group") == other:
+                continue
+            x0, y0, x1, y1 = p[1:5]
+            w, h = x1 - x0, y1 - y0
+            if x0 - 0.15 * w <= x <= x1 + 0.15 * w and y0 - 0.1 * h <= y <= y0 + 0.5 * h:
+                here.add(p[6])
+        if prev is not None:
+            both = here & prev[1]
+            if both:
+                return min(both), prev[0]
+        prev = (tt, here)
+    return None
 
 
 def line_map(img):
@@ -334,6 +419,15 @@ def refine(lines_frame, M, ang, r_avg):
     return float(rs[(a + b) // 2])
 
 
+def blank_box(lines_frame, box):
+    """The line map with the shooter's box (a little wider, and down past the shoes) cleared."""
+    lf = lines_frame.copy()
+    x0, y0, x1, y1 = box
+    pad = 0.15 * (x1 - x0)
+    lf[max(0, int(y0)):int(y1 + 0.05 * (y1 - y0)) + 1, max(0, int(x0 - pad)):int(x1 + pad) + 1] = 0
+    return lf
+
+
 def court_spot(arc, side, mx, my, dist_ft=None):
     """Rough court spot of a point on the floor (map pixels), in feet on a half court: the rim
     at (0, 0), x to the right as you face the basket from half court, y out toward half court.
@@ -396,6 +490,21 @@ def read_at(cap, video, t):
     return None
 
 
+def team_groups(doc, shots):
+    """Which tracker jersey group (0 or 1) each team wears, by a vote over shot_split's shooters.
+    Empty when the tracks have no groups or the vote is unclear."""
+    tracks, votes = doc.get("tracks") or {}, {}
+    for s in shots:
+        g = tracks.get(str(s.get("shooter_track")), {}).get("group")
+        if g in (0, 1) and s.get("shooter_jersey") in ("Valley", "Opponent"):
+            key = (g == 0) == (s["shooter_jersey"] == "Valley")   # True: group 0 is Valley
+            votes[key] = votes.get(key, 0) + 1
+    yes, no = votes.get(True, 0), votes.get(False, 0)
+    if yes + no < 6 or max(yes, no) < 2 * min(yes, no):
+        return {}
+    return {"Valley": 0, "Opponent": 1} if yes > no else {"Valley": 1, "Opponent": 0}
+
+
 def classify(doc, shots, video, side_of=None, debug=None):
     """Label each field goal in shots (from shot_split) with points 2 or 3, margin and arc_source.
     Changes the shots in place and returns the arc found for each basket."""
@@ -407,10 +516,12 @@ def classify(doc, shots, video, side_of=None, debug=None):
         raise OSError(f"can't open the film: {str(video)[:80]}")
     scale = 960 / doc["frame_size"][0]   # work on half-size frames: plenty for court lines
     frames, acc = {}, {}
+    group_of = team_groups(doc, shots)
     for s in shots:
         if s.get("kind") != "FG":
             continue
-        tk = find_takeoff(doc, s)
+        other = group_of.get("Opponent" if s.get("team") == "Valley" else "Valley") if USE_TEAM else None
+        tk = find_takeoff(doc, s, other)
         if tk is None:
             s["points"] = None
             continue
@@ -465,14 +576,22 @@ def classify(doc, shots, video, side_of=None, debug=None):
             x, y = court_spot(arcs[side], side, mx, my)
             s.update(court_x=x, court_y=y, zone=zone_of(x, y, 2))
             continue
-        r_own = refine(lines, M, ang, r_avg)
+        box = [v * scale for v in s["shooter_box"]]
+        if REFINE == "mask":
+            r_own = refine(blank_box(lines, box), M, ang, r_avg)
+        else:
+            r_own = refine(lines, M, ang, r_avg)
         r_arc = r_own if r_own is not None else r_avg
+        Mi = cv2.invertAffineTransform(M)
+        lx, ly = BX + r_arc * np.cos(np.deg2rad(ang)), BY + r_arc * np.sin(np.deg2rad(ang))
+        s["line_at"] = [round(float((Mi[0, 0] * lx + Mi[0, 2]) / scale), 1), round(float((Mi[1, 1] * ly + Mi[1, 2]) / scale), 1)]
         # Feet past the line, in rough feet: the arc is 19 ft 9 in from the basket in every direction,
         # so its radius along this ray sets the scale (the far side is squashed in the picture).
-        margin = ARC_FT * (r_feet - r_arc) / r_arc
+        ratio = r_feet / r_arc
+        margin = ARC_FT * (ratio - 1)
         s.update(points=3 if margin > MARGIN_FT else 2, margin=round(margin, 1),
                  arc_source="own frame" if r_own is not None else "game average")
-        x, y = court_spot(arcs[side], side, mx, my, ARC_FT * r_feet / r_arc)
+        x, y = court_spot(arcs[side], side, mx, my, ARC_FT * ratio)
         s.update(court_x=x, court_y=y, zone=zone_of(x, y, s["points"]))
     return arcs
 
