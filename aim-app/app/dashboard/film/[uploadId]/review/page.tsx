@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import ChatPanel from "@/components/ChatPanel";
+import { FilmShotChart } from "@/components/FilmShotChart";
 import { fetchFilmPlaybackUrl } from "@/lib/teamApi";
 import {
   addReviewShot,
@@ -373,6 +374,8 @@ export default function ReviewPage() {
           </section>
 
           <BoxScore valley={lines.valley} opponent={lines.opponent} />
+
+          <FilmShotChart events={events} onPick={select} />
 
           <ChatPanel token={token} teamId={teamId} uploadId={uploadId} onSeek={playFrom} />
 

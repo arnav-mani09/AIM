@@ -51,7 +51,7 @@ JERSEY_BGR = {
     "purple": (120, 40, 100),
 }
 
-EVENTS_VERSION = 2   # 2: field goals labeled 2 or 3 from the film
+EVENTS_VERSION = 3   # 2: field goals labeled 2 or 3 from the film. 3: court spot and zone per field goal
 
 
 def _lab(bgr):
@@ -194,7 +194,7 @@ def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: s
             "parts": {**parts, "shot_type": type_sure if type_sure is not None else 0.3},
             "detail": {k: s.get(k) for k in ("make_t", "evidence", "stillness", "ft_pair", "basket", "half",
                                              "shooter_track", "shooter_jersey", "ball_score", "rim_score",
-                                             "margin", "arc_source", "take")},
+                                             "margin", "arc_source", "take", "court_x", "court_y", "zone")},
         })
     return {
         "version": EVENTS_VERSION,

@@ -27,7 +27,8 @@ DRAFT = {
     "version": 1, "teams_guessed": True, "window": {"start": 10, "end": 100},
     "events": [
         {"type": "shot", "t": 12.5, "team": "valley", "shot_type": "fg2", "made": True, "confidence": 0.8,
-         "player_number": None, "rim": [1, 2, 3, 4], "parts": {"attempt": 0.8}, "detail": {"evidence": 2}},
+         "player_number": None, "rim": [1, 2, 3, 4], "parts": {"attempt": 0.8},
+         "detail": {"evidence": 2, "court_x": -6.5, "court_y": 12.0, "zone": "mid_range_left"}},
         {"type": "shot", "t": 30.0, "team": "opponent", "shot_type": "ft", "made": False, "confidence": 0.6,
          "player_number": None, "rim": [1, 2, 3, 4], "parts": {"attempt": 0.6}, "detail": {}},
         {"type": "shot", "t": 44.0, "team": "valley", "shot_type": "fg2", "made": False, "confidence": 0.5,
@@ -78,7 +79,10 @@ class ShotEventsTest(unittest.TestCase):
         self.assertTrue(body["teams_guessed"])
         self.assertEqual([e["t"] for e in body["events"]], [12.5, 30.0, 44.0])
         self.assertEqual(set(body["events"][0]), {"id", "type", "t", "team", "shot_type", "made", "confidence",
-                                                  "player_number", "status"})
+                                                  "player_number", "status", "x", "y", "zone"})
+        self.assertEqual((body["events"][0]["x"], body["events"][0]["y"], body["events"][0]["zone"]),
+                         (-6.5, 12.0, "mid_range_left"))
+        self.assertIsNone(body["events"][1]["x"])
         self.assertEqual(body["box_score"]["valley"], {"fgm": 1, "fga": 2, "fg3m": 0, "fg3a": 0, "ftm": 0, "fta": 0, "pts": 2})
         self.assertEqual(body["box_score"]["opponent"]["fta"], 1)
 
@@ -87,6 +91,7 @@ class ShotEventsTest(unittest.TestCase):
         # Changing the call makes it fixed and keeps the model's original.
         fixed = self.client.patch(f"{self.base}/{ids[0]}", json={"shot_type": "fg3"}).json()
         self.assertEqual((fixed["shot_type"], fixed["status"]), ("fg3", "fixed"))
+        self.assertEqual((fixed["x"], fixed["y"]), (-6.5, 12.0))   # a fix doesn't move the shot
         # Status alone is taken as sent.
         self.assertEqual(self.client.patch(f"{self.base}/{ids[1]}", json={"status": "confirmed"}).json()["status"], "confirmed")
         self.assertEqual(self.client.patch(f"{self.base}/{ids[2]}", json={"status": "deleted"}).json()["status"], "deleted")

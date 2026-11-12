@@ -12,7 +12,7 @@ function rampColorForPct(pct: number): string {
   return FG_PCT_RAMP[index];
 }
 
-const ZONE_TITLES: Record<ShotZone, string> = {
+export const ZONE_TITLES: Record<ShotZone, string> = {
   restricted_area: "Restricted area",
   paint: "Paint",
   mid_range_left: "Mid-range (L)",

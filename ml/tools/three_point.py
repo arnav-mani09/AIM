@@ -334,6 +334,54 @@ def refine(lines_frame, M, ang, r_avg):
     return float(rs[(a + b) // 2])
 
 
+def court_spot(arc, side, mx, my, dist_ft=None):
+    """Rough court spot of a point on the floor (map pixels), in feet on a half court: the rim
+    at (0, 0), x to the right as you face the basket from half court, y out toward half court.
+
+    The arc is a painted circle seen at a slant, so squashing its ellipse back into a circle undoes
+    most of the camera's foreshortening. The direction from the basket comes from that unsquashed
+    picture. The distance is dist_ft when given (the 2 or 3 call's own distance, so the spot always
+    agrees with the call), else the unsquashed distance with the arc as 19 ft 9 in."""
+    (cx, cy, a, b, th), _ = arc
+    R = np.array([[np.cos(th), np.sin(th)], [-np.sin(th), np.cos(th)]])
+
+    def unsquash(px, py):   # into a circle of radius 1, back in picture axes
+        q = R @ np.array([px - cx, py - cy])
+        return R.T @ np.array([q[0] / a, q[1] / b])
+
+    d = unsquash(mx, my) - unsquash(BX, BY)
+    out = d[0] if side == "left" else -d[0]    # away from the baseline, toward half court
+    across = -d[1] if side == "left" else d[1]  # the far sideline is on your right at the left basket
+    n = float(np.hypot(out, across))
+    if n < 1e-6:
+        return 0.0, 0.0
+    dist = min(45.0, dist_ft if dist_ft is not None else ARC_FT * n)
+    # A camera at mid-court sees the near baseline slanting, which this flat unsquashing can't undo,
+    # so corner shots can land a few feet behind the rim. Hardly anyone shoots from back there:
+    # keep those on the baseline side of the basket, out to the side at the same distance.
+    ang = min(np.radians(88), abs(np.arctan2(across, out)))
+    x, y = np.copysign(dist * np.sin(ang), across), dist * np.cos(ang)
+    return round(float(x), 1), round(float(y), 1)
+
+
+def zone_of(x, y, points):
+    """Shot zone from a court spot in feet, with the same names as backend shot_zones.ZONE_LABELS.
+    points (2 or 3) decides inside or outside the arc, so the zone always agrees with the call."""
+    dist = float(np.hypot(x, y))
+    left = "left" if x < 0 else "right"
+    if points == 3:
+        if y <= 8.0:
+            return f"corner_three_{left}"
+        if abs(np.degrees(np.arctan2(x, y))) <= 22.5:
+            return "top_of_key_three"
+        return f"wing_three_{left}"
+    if dist <= 4.0:
+        return "restricted_area"
+    if abs(x) <= 6.0 and y <= 13.75:   # 12 ft lane, free throw line 15 ft from the backboard
+        return "paint"
+    return f"mid_range_{left}"
+
+
 def read_at(cap, video, t):
     """One frame at t seconds. Seeks, so only the frames around each shot get decoded. The film can
     be a file or a web link (a signed R2 link on Modal); a link can drop, so on a failed read it
@@ -414,6 +462,8 @@ def classify(doc, shots, video, side_of=None, debug=None):
         r_avg = arc_radius(arcs[side], ang)
         if r_avg is None:
             s.update(points=2, arc_source="behind basket", margin=None)
+            x, y = court_spot(arcs[side], side, mx, my)
+            s.update(court_x=x, court_y=y, zone=zone_of(x, y, 2))
             continue
         r_own = refine(lines, M, ang, r_avg)
         r_arc = r_own if r_own is not None else r_avg
@@ -422,6 +472,8 @@ def classify(doc, shots, video, side_of=None, debug=None):
         margin = ARC_FT * (r_feet - r_arc) / r_arc
         s.update(points=3 if margin > MARGIN_FT else 2, margin=round(margin, 1),
                  arc_source="own frame" if r_own is not None else "game average")
+        x, y = court_spot(arcs[side], side, mx, my, ARC_FT * r_feet / r_arc)
+        s.update(court_x=x, court_y=y, zone=zone_of(x, y, s["points"]))
     return arcs
 
 

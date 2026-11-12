@@ -18,6 +18,12 @@ export type ShotEvent = {
   confidence: number;
   player_number: number | null;
   status: EventStatus;
+  // Where the shooter's feet were, in feet on a half court with the rim at (0, 0): x to the right as
+  // you face the basket, y out toward half court. Missing for free throws, shots added by hand and
+  // shots where AIM found no shooter. Coach fixes don't move it.
+  x?: number | null;
+  y?: number | null;
+  zone?: string | null;
 };
 
 export type TeamLine = {
