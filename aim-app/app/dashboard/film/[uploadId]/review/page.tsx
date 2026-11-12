@@ -9,6 +9,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import ChatPanel from "@/components/ChatPanel";
 import { FilmShotChart } from "@/components/FilmShotChart";
+import { GameInsights } from "@/components/GameInsights";
 import { fetchFilmPlaybackUrl } from "@/lib/teamApi";
 import {
   addReviewShot,
@@ -376,6 +377,13 @@ export default function ReviewPage() {
           <BoxScore valley={lines.valley} opponent={lines.opponent} />
 
           <FilmShotChart events={events} onPick={select} />
+
+          <GameInsights
+            token={mockOnly ? null : token}
+            teamId={teamId}
+            uploadId={uploadId}
+            version={events.map((e) => `${e.id}${e.team}${e.shot_type}${e.made}${e.status}`).join()}
+          />
 
           <ChatPanel token={token} teamId={teamId} uploadId={uploadId} onSeek={playFrom} />
 

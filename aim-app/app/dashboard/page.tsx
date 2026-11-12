@@ -26,6 +26,7 @@ import { formatLocalDateTime } from "@/lib/dateTime";
 import { FilmUploadError, FilmUploadSession, uploadFilm } from "@/lib/filmUpload";
 import ChatPanel from "@/components/ChatPanel";
 import { SeasonView } from "@/components/SeasonView";
+import { ScoutingView } from "@/components/ScoutingView";
 
 const formatGigabytes = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 
@@ -56,7 +57,7 @@ export default function DashboardPage() {
 function Dashboard() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const activeTab = (searchParams.get("tab") as "film" | "season" | "games" | "chat" | "teams" | null) ?? "film";
+  const activeTab = (searchParams.get("tab") as "film" | "season" | "scouting" | "games" | "chat" | "teams" | null) ?? "film";
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [teams, setTeams] = useState<TeamMembership[]>([]);
@@ -783,6 +784,25 @@ function Dashboard() {
             </p>
           ) : (
             <SeasonView key={filmTeamId} token={authToken} teamId={filmTeamId} />
+          )}
+        </section>
+      )}
+
+      {activeTab === "scouting" && (
+        <section className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-semibold text-ink">Scouting</h2>
+              <p className="mt-1 text-sm text-subtext">Where a team shoots from and how well, built from your film.</p>
+            </div>
+            <TeamPicker teams={teams} value={filmTeamId} onChange={setFilmTeamId} />
+          </div>
+          {teamsLoading ? (
+            <p className="text-sm text-subtext">Loading teams…</p>
+          ) : !authToken || filmTeamId === "" ? (
+            <p className="text-sm text-subtext">You&apos;re not on a team yet. Create one in Team Spaces first.</p>
+          ) : (
+            <ScoutingView key={filmTeamId} token={authToken} teamId={filmTeamId} />
           )}
         </section>
       )}

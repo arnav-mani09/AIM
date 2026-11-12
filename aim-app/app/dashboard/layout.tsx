@@ -8,6 +8,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 const NAV_ITEMS = [
   { tab: "film", label: "Film + Clips", icon: "🎬" },
   { tab: "season", label: "Season", icon: "📊" },
+  { tab: "scouting", label: "Scouting", icon: "🔎" },
   { tab: "games", label: "Games", icon: "🏀" },
   { tab: "chat", label: "AI Chat", icon: "💬" },
   { tab: "teams", label: "Team Spaces", icon: "👥" },
