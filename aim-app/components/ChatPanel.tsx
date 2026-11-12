@@ -67,9 +67,10 @@ export default function ChatPanel({
   return (
     <section className="section-card flex flex-col gap-4">
       <div>
-        <h2 className="text-xl font-semibold text-ink">Ask about this game</h2>
+        <h2 className="text-xl font-semibold text-ink">{uploadId ? "Ask about this game" : "Ask about your games"}</h2>
         <p className="text-sm text-subtext">
-          Answers come from AIM&apos;s shots, including your fixes. Click a time to watch that shot.
+          Answers come from AIM&apos;s shots, including your fixes.
+          {onSeek ? " Click a time to watch that shot." : ""}
         </p>
       </div>
 

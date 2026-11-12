@@ -24,6 +24,8 @@ import {
 } from "@/lib/teamApi";
 import { formatLocalDateTime } from "@/lib/dateTime";
 import { FilmUploadError, FilmUploadSession, uploadFilm } from "@/lib/filmUpload";
+import ChatPanel from "@/components/ChatPanel";
+import { SeasonView } from "@/components/SeasonView";
 
 const formatGigabytes = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 
@@ -54,7 +56,7 @@ export default function DashboardPage() {
 function Dashboard() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const activeTab = (searchParams.get("tab") as "film" | "games" | "chat" | "teams" | null) ?? "film";
+  const activeTab = (searchParams.get("tab") as "film" | "season" | "games" | "chat" | "teams" | null) ?? "film";
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [teams, setTeams] = useState<TeamMembership[]>([]);
@@ -377,7 +379,7 @@ function Dashboard() {
         <p className="label-text">Workspace</p>
         <h1 className="text-2xl font-semibold text-ink">Your AIM operations center</h1>
         <p className="mt-1 text-subtext">
-          Upload film, collaborate in chat, review past insights, and manage teams—all powered by AIM.
+          Upload film, check your season, ask AIM about your games and manage your teams.
         </p>
       </header>
 
@@ -735,7 +737,7 @@ function Dashboard() {
             ) : gamesError ? (
               <p className="mt-2 text-sm text-red-500">{gamesError}</p>
             ) : gamesList.length === 0 ? (
-              <p className="mt-2 text-sm text-subtext">No games yet — create one above.</p>
+              <p className="mt-2 text-sm text-subtext">No games yet. Create one above.</p>
             ) : (
               <ul className="mt-4 space-y-3 text-sm">
                 {gamesList.map((game) => (
@@ -758,39 +760,49 @@ function Dashboard() {
         </section>
       )}
 
-      {activeTab === "chat" && (
-        <section className="section-card grid gap-6 md:grid-cols-2">
-          <div>
-            <h3 className="text-xl font-semibold text-ink">AI chat</h3>
-            <p className="mt-2 text-sm text-subtext">
-              Ask about lineups, shooters, or scouting adjustments. Responses will use the latest stats feed.
-            </p>
-            <div className="mt-4 rounded-2xl border border-stroke p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-subtext">Chat thread</p>
-              <div className="mt-3 flex flex-col gap-3 text-sm">
-                <div className="rounded-2xl bg-tint px-3 py-2 text-ink">
-                  Which player is most reliable in crunch time?
-                </div>
-                <div className="self-end rounded-2xl bg-accent px-3 py-2 text-white">
-                  #24 Lane has 64% eFG in final 2 minutes. Feature him in ATO sets.
-                </div>
-              </div>
+      {activeTab === "season" && (
+        <section className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-semibold text-ink">Season</h2>
+              <p className="mt-1 text-sm text-subtext">
+                Built from your own game film. Scores are drafts until you review each game.
+              </p>
             </div>
+            <TeamPicker teams={teams} value={filmTeamId} onChange={setFilmTeamId} />
           </div>
+          {teamsLoading ? (
+            <p className="text-sm text-subtext">Loading teams…</p>
+          ) : !authToken || filmTeamId === "" ? (
+            <p className="text-sm text-subtext">
+              You&apos;re not on a team yet.{" "}
+              <Link href="/dashboard?tab=teams" className="underline">
+                Create one in Teams
+              </Link>{" "}
+              first.
+            </p>
+          ) : (
+            <SeasonView key={filmTeamId} token={authToken} teamId={filmTeamId} />
+          )}
+        </section>
+      )}
 
-          <div>
-            <h3 className="text-xl font-semibold text-ink">Past insights</h3>
-            <ul className="mt-3 space-y-3 text-sm text-subtext">
-              <li className="rounded-2xl border border-stroke p-4">
-                <strong className="text-ink">Valley vs Central</strong>
-                <p>Possession split 64/36 with Lane flagged as premier shooter.</p>
-              </li>
-              <li className="rounded-2xl border border-stroke p-4">
-                <strong className="text-ink">Northside vs Westfield</strong>
-                <p>Press break turnover issues for #12 Brooks—recommend extra reps.</p>
-              </li>
-            </ul>
-          </div>
+      {activeTab === "chat" && (
+        <section className="flex flex-col gap-4">
+          <TeamPicker teams={teams} value={filmTeamId} onChange={setFilmTeamId} />
+          {teamsLoading ? (
+            <p className="text-sm text-subtext">Loading teams…</p>
+          ) : filmTeamId === "" ? (
+            <p className="text-sm text-subtext">
+              You&apos;re not on a team yet.{" "}
+              <Link href="/dashboard?tab=teams" className="underline">
+                Create one in Teams
+              </Link>{" "}
+              first.
+            </p>
+          ) : (
+            <ChatPanel key={filmTeamId} token={authToken} teamId={filmTeamId} />
+          )}
         </section>
       )}
 
@@ -811,7 +823,7 @@ function Dashboard() {
               ) : teamsError ? (
                 <p className="mt-2 text-sm text-red-500">{teamsError}</p>
               ) : teams.length === 0 ? (
-                <p className="mt-2 text-sm text-subtext">No teams yet—create one or join with a code.</p>
+                <p className="mt-2 text-sm text-subtext">No teams yet. Create one or join with a code.</p>
               ) : (
                 <ul className="mt-3 space-y-3">
                   {teams.map((membership) => (
@@ -962,5 +974,33 @@ function Dashboard() {
       )}
 
     </main>
+  );
+}
+
+function TeamPicker({
+  teams,
+  value,
+  onChange,
+}: {
+  teams: TeamMembership[];
+  value: number | "";
+  onChange: (value: number | "") => void;
+}) {
+  if (teams.length < 2) return null;
+  return (
+    <label className="flex flex-col gap-2 text-sm md:w-72">
+      Team
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))}
+        className="rounded-xl border border-stroke px-3 py-2 text-ink"
+      >
+        {teams.map((membership) => (
+          <option key={membership.team.id} value={membership.team.id}>
+            {membership.team.name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

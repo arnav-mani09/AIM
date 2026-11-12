@@ -6,7 +6,7 @@ import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1.routes import auth, stats, ingestion, teams, clips, film, games, players, chat
+from app.api.v1.routes import auth, stats, ingestion, teams, clips, film, games, players, chat, season
 from app.core.config import deployment_environment, get_settings
 from app.db.session import SessionLocal
 from app.services.film_processing import FilmProcessingService
@@ -76,6 +76,7 @@ app.include_router(film.router, prefix=settings.api_v1_prefix)
 app.include_router(games.router, prefix=settings.api_v1_prefix)
 app.include_router(players.router, prefix=settings.api_v1_prefix)
 app.include_router(chat.router, prefix=settings.api_v1_prefix)
+app.include_router(season.router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/health")

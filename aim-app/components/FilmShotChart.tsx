@@ -77,7 +77,15 @@ function Court() {
   );
 }
 
-export function FilmShotChart({ events, onPick }: { events: ShotEvent[]; onPick: (event: ShotEvent) => void }) {
+export function FilmShotChart({
+  events,
+  onPick,
+  title = "Shot chart",
+}: {
+  events: ShotEvent[];
+  onPick: (event: ShotEvent) => void;
+  title?: string;
+}) {
   const [team, setTeam] = useState<TeamSide>("valley");
   const [hoverId, setHoverId] = useState<number | null>(null);
 
@@ -106,7 +114,7 @@ export function FilmShotChart({ events, onPick }: { events: ShotEvent[]; onPick:
     <section className="section-card flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-ink">Shot chart</h2>
+          <h2 className="text-xl font-semibold text-ink">{title}</h2>
           <p className="text-sm text-subtext">
             {placed.length > 0
               ? `${makes}/${placed.length} field goals · ${Math.round((makes / placed.length) * 100)}%`
