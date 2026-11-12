@@ -103,7 +103,7 @@
       "due": "2026-11-18",
       "priority": "medium",
       "title": "AIM: box score + shot chart from real data",
-      "notes": "Confirmed events become Possession rows; replace mockData.ts."
+      "notes": "Shot chart from real shot spots is live on the review screen (Nov 11). Left: dashboard pages still read mock data (lib/platformData.ts); switch them to real shot events."
     },
     {
       "id": "aim-rosters-tagging",
