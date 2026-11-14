@@ -6,6 +6,7 @@ from typing import List
 import httpx
 import modal
 import sentry_sdk
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.config import deployment_environment, get_settings
@@ -22,8 +23,8 @@ STUCK_AFTER = timedelta(minutes=45)
 MAX_ATTEMPTS = 2
 # Detection on a 60-minute game should take well under 30 min; the worker's own limit is 90.
 DETECTION_STUCK_AFTER = timedelta(minutes=100)
-# The event step takes seconds; the worker's limit is 15 min.
-EVENTS_STUCK_AFTER = timedelta(minutes=20)
+# The event step takes a few minutes (it reads the film for rebounds and turnovers); the worker's limit is 25 min.
+EVENTS_STUCK_AFTER = timedelta(minutes=30)
 
 
 class FilmProcessingService:
@@ -171,10 +172,23 @@ class FilmProcessingService:
         self.start_events(upload.id)
 
     def start_events(self, upload_id: int) -> None:
-        """Draft shot events from the tracks (CPU, seconds). Also used to rerun on old uploads."""
-        upload = self.db.query(GameUpload).filter(GameUpload.id == upload_id).first()
-        key = storage.key_from_storage_url(upload.tracks_url) if upload else None
-        if not upload or not key:
+        """Draft shots, team rebounds and turnovers from the tracks (CPU, a few minutes). Also used to rerun on old uploads."""
+        claimed = (
+            self.db.query(GameUpload)
+            .filter(
+                GameUpload.id == upload_id,
+                GameUpload.tracks_url.isnot(None),
+                or_(GameUpload.events_status.is_(None), GameUpload.events_status != "running"),
+            )
+            .update({GameUpload.events_status: "running"}, synchronize_session=False)
+        )
+        if not claimed:
+            self.db.rollback()
+            return
+        upload = self.db.query(GameUpload).populate_existing().filter(GameUpload.id == upload_id).one()
+        key = storage.key_from_storage_url(upload.tracks_url)
+        if not key:
+            self.db.rollback()
             return
         try:
             make_events = modal.Function.from_name(self.settings.modal_film_app, "make_events")

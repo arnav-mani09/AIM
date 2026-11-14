@@ -34,6 +34,16 @@ class TeamInsights(BaseModel):
     ft_rate: float | None = None  # FTA / FGA
     fg3a_rate: float | None = None  # 3PA / FGA
     small_sample: bool
+    # Team rebounds and turnovers, over the films that have them (play_games); None without any.
+    # Rated "fair" (see InsightsRead.quality).
+    play_games: int = 0
+    oreb: int | None = None
+    dreb: int | None = None
+    reb: int | None = None
+    to: int | None = None
+    tov_pct: float | None = None  # TO / (FGA + 0.44 x FTA - OREB + TO)
+    oreb_pct: float | None = None  # OREB / (OREB + other team's DREB)
+    dreb_pct: float | None = None  # DREB / (DREB + other team's OREB)
     zones: list[ZoneRow]
     lines: list[str]  # plain-language scouting lines
 
@@ -55,4 +65,5 @@ class InsightsRead(BaseModel):
     games: list[InsightsGame]  # the films counted, newest first
     skipped: int  # asked-for films whose shots aren't ready yet
     teams: TeamsInsights
-    coming_soon: list[str]  # stats that need possession tracking first
+    coming_soon: list[str]  # stats not shown yet
+    quality: dict[str, str] = {}  # stat name -> "fair" for stats to read as rough (rebounds, turnovers)

@@ -1,10 +1,12 @@
 import math
+import re
 from pathlib import Path
 from uuid import uuid4
 
 import sentry_sdk
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.api import deps
@@ -23,7 +25,14 @@ from app.schemas.game_upload import (
     UploadedPart,
 )
 from app.schemas.film_segment import FilmSegmentRead, FilmSegmentCreate
-from app.schemas.shot_event import ShotEventCreate, ShotEventPatch, ShotEventRead, ShotEventsRead
+from app.schemas.shot_event import (
+    PlayEventCreate,
+    PlayEventRead,
+    ShotEventCreate,
+    ShotEventPatch,
+    ShotEventRead,
+    ShotEventsRead,
+)
 from app.models.shot_event import ShotEvent
 from app.services import shot_events
 from app.schemas.clip import ClipRead
@@ -249,6 +258,43 @@ def abort_film_upload(
     return None
 
 
+def _owned_analysis_keys(db: Session, upload: GameUpload) -> list[str]:
+    key = storage.key_from_storage_url(upload.storage_url)
+    if (
+        not key
+        or storage.to_storage_url(key) != upload.storage_url
+        or not re.fullmatch(rf"teams/{upload.team_id}/film/[0-9a-f]{{32}}\.(mp4|mov)", key)
+    ):
+        return []
+    stem = re.escape(key.rsplit(".", 1)[0])
+    keys = []
+    for url, suffix in ((upload.tracks_url, r"\.json\.gz"), (upload.events_url, r"\.events\.json")):
+        candidate = storage.key_from_storage_url(url)
+        if (
+            not candidate
+            or storage.to_storage_url(candidate) != url
+            or not re.fullmatch(stem + r"\.tracks-[^/]+" + suffix, candidate)
+        ):
+            continue
+        shared_upload = db.query(GameUpload.id).filter(
+            GameUpload.id != upload.id,
+            or_(
+                GameUpload.storage_url.in_([upload.storage_url, url]),
+                GameUpload.proxy_url == url,
+                GameUpload.thumbnail_url == url,
+                GameUpload.tracks_url == url,
+                GameUpload.events_url == url,
+            ),
+        ).first()
+        shared_clip = db.query(Clip.id).filter(
+            or_(Clip.source_upload_id.is_(None), Clip.source_upload_id != upload.id),
+            Clip.storage_url == url,
+        ).first()
+        if not shared_upload and not shared_clip:
+            keys.append(candidate)
+    return keys
+
+
 @router.delete("/{upload_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_game_film(
     team_id: int,
@@ -257,6 +303,17 @@ def delete_game_film(
     _membership=Depends(deps.require_team_membership),
 ):
     upload = _get_upload(db, team_id, upload_id)
+    service = FilmProcessingService(db)
+    job_ids = dict.fromkeys(
+        job_id for job_id in (upload.processing_job_id, upload.detection_job_id, upload.events_job_id)
+        if job_id
+    )
+    for job_id in job_ids:
+        try:
+            service.cancel_job(job_id)
+        except Exception as exc:
+            sentry_sdk.capture_exception(exc)
+    analysis_keys = _owned_analysis_keys(db, upload) if not upload.storage_upload_id else []
     # Remove any clips that were published from this upload so nothing points
     # at a file that is about to be deleted.
     linked_clips = (
@@ -266,15 +323,12 @@ def delete_game_film(
     )
     for clip in linked_clips:
         db.delete(clip)
-    if upload.processing_job_id:
-        # Otherwise the job can finish later and write a proxy nobody owns.
-        FilmProcessingService(db).cancel_job(upload.processing_job_id)
     key = storage.key_from_storage_url(upload.storage_url)
     derived = [storage.key_from_storage_url(u) for u in (upload.proxy_url, upload.thumbnail_url)]
     try:
         if key and upload.storage_upload_id:
             storage.abort_multipart_upload(key, upload.storage_upload_id)
-        for object_key in [key, *derived]:
+        for object_key in dict.fromkeys([key, *derived, *analysis_keys]):
             if object_key and not upload.storage_upload_id:
                 storage.delete_object(object_key)
     except (BotoCoreError, ClientError) as exc:
@@ -390,23 +444,36 @@ def publish_segment_as_clip(
 def _events_response(db: Session, upload: GameUpload) -> ShotEventsRead:
     events = (
         db.query(ShotEvent)
-        .filter(ShotEvent.upload_id == upload.id)
+        .filter(ShotEvent.upload_id == upload.id, ShotEvent.type.in_(shot_events.VISIBLE_TYPES))
         .order_by(ShotEvent.t.asc(), ShotEvent.id.asc())
         .all()
     )
+    plays_known = shot_events.has_plays(upload, events)
     return ShotEventsRead(
         status=shot_events.review_status(upload),
-        events=events,
-        box_score=shot_events.box_score(events),
+        events=[e for e in events if e.type == shot_events.SHOT],
+        plays=[e for e in events if shot_events.is_play(e)],
+        has_plays=plays_known,
+        box_score=shot_events.box_score(events, plays_known),
         teams_guessed=bool((upload.events_info or {}).get("teams_guessed")),
     )
 
 
 def _get_event(db: Session, upload_id: int, event_id: int) -> ShotEvent:
-    event = db.query(ShotEvent).filter(ShotEvent.id == event_id, ShotEvent.upload_id == upload_id).first()
+    """A shot or play on this film. Hidden types (steals, assists) are never reachable."""
+    event = (
+        db.query(ShotEvent)
+        .filter(ShotEvent.id == event_id, ShotEvent.upload_id == upload_id,
+                ShotEvent.type.in_(shot_events.VISIBLE_TYPES))
+        .first()
+    )
     if not event:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shot not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
     return event
+
+
+def _event_read(event: ShotEvent) -> ShotEventRead | PlayEventRead:
+    return PlayEventRead.model_validate(event) if shot_events.is_play(event) else ShotEventRead.model_validate(event)
 
 
 @router.get("/{upload_id}/events", response_model=ShotEventsRead)
@@ -416,7 +483,7 @@ def list_shot_events(
     db: Session = Depends(deps.get_db_session),
     _membership=Depends(deps.require_team_membership),
 ):
-    """AIM's drafted shots for this film and the box score they add up to."""
+    """AIM's drafted shots, team rebounds and turnovers for this film and the box score they add up to."""
     upload = _get_upload(db, team_id, upload_id)
     if upload.events_status == "running" and upload.events_job_id:
         FilmProcessingService(db).refresh_events(upload.id)
@@ -424,7 +491,7 @@ def list_shot_events(
     return _events_response(db, upload)
 
 
-@router.patch("/{upload_id}/events/{event_id}", response_model=ShotEventRead)
+@router.patch("/{upload_id}/events/{event_id}", response_model=ShotEventRead | PlayEventRead)
 def update_shot_event(
     team_id: int,
     upload_id: int,
@@ -434,12 +501,18 @@ def update_shot_event(
     current_user=Depends(deps.get_current_user),
     _membership=Depends(deps.require_team_membership),
 ):
+    """Fix a shot, or a rebound or turnover (team, time or status only; switching a rebound's
+    team also switches offensive and defensive)."""
     _get_upload(db, team_id, upload_id)
     event = _get_event(db, upload_id, event_id)
-    shot_events.apply_patch(event, payload.model_dump(exclude_unset=True), current_user.id)
+    patch = payload.model_dump(exclude_unset=True)
+    if shot_events.is_play(event) and set(patch) - {"team", "t", "status"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="A rebound or turnover can only change its team, time or status")
+    shot_events.apply_patch(event, patch, current_user.id)
     db.commit()
     db.refresh(event)
-    return event
+    return _event_read(event)
 
 
 @router.post("/{upload_id}/events", response_model=ShotEventRead, status_code=status.HTTP_201_CREATED)
@@ -461,6 +534,26 @@ def add_shot_event(
     return event
 
 
+@router.post("/{upload_id}/plays", response_model=PlayEventRead, status_code=status.HTTP_201_CREATED)
+def add_play_event(
+    team_id: int,
+    upload_id: int,
+    payload: PlayEventCreate,
+    db: Session = Depends(deps.get_db_session),
+    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
+):
+    """A team rebound or turnover the model missed, added by the coach."""
+    _get_upload(db, team_id, upload_id)
+    event = ShotEvent(upload_id=upload_id, type=payload.type, t=payload.t, team=payload.team,
+                      shot_type=shot_events.PLAY_SHOT_TYPE, made=False, confidence=1.0, status="fixed",
+                      original=None, updated_by_id=current_user.id)
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
 @router.post("/{upload_id}/events/swap-teams", response_model=ShotEventsRead)
 def swap_shot_event_teams(
     team_id: int,
@@ -469,7 +562,7 @@ def swap_shot_event_teams(
     current_user=Depends(deps.get_current_user),
     _membership=Depends(deps.require_team_membership),
 ):
-    """Flip Valley and Opponent on every shot, for when the jersey colors were guessed wrong."""
+    """Flip Valley and Opponent on every shot, rebound and turnover, for when the jersey colors were guessed wrong."""
     upload = _get_upload(db, team_id, upload_id)
     shot_events.swap_teams(db, upload, current_user.id)
     db.commit()
@@ -483,8 +576,9 @@ def rerun_shot_events(
     db: Session = Depends(deps.get_db_session),
     _membership=Depends(deps.require_team_membership),
 ):
-    """Draft the shots again from this film's tracks (after the rules improve, or for films
-    detected before the event step existed). Shots a coach already reviewed are kept."""
+    """Draft the shots, rebounds and turnovers again from this film's tracks (after the rules
+    improve, or for films drafted before a step existed). If a coach reviewed any shot, all the
+    shots are kept as they are, and the same for rebounds and turnovers; the rest is redrafted."""
     upload = _get_upload(db, team_id, upload_id)
     if upload.detection_status != "done" or not upload.tracks_url:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Player detection hasn't finished for this film")

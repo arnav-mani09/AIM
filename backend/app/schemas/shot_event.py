@@ -1,9 +1,10 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Team = Literal["valley", "opponent"]
 ShotType = Literal["fg2", "fg3", "ft"]
+PlayType = Literal["oreb", "dreb", "to"]  # team offensive / defensive rebound, turnover
 Status = Literal["draft", "confirmed", "fixed", "deleted"]
 
 
@@ -39,17 +40,48 @@ class ShotEventRead(BaseModel):
         return {**fields, "x": detail.get("court_x"), "y": detail.get("court_y"), "zone": detail.get("zone")}
 
 
+class PlayEventRead(BaseModel):
+    """A team rebound or turnover. Steals and assists are drafted too but never sent."""
+
+    id: int
+    type: PlayType
+    t: float
+    team: Team
+    confidence: float
+    status: Status
+
+    class Config:
+        from_attributes = True
+
+
+class PlayEventCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    t: float = Field(ge=0, allow_inf_nan=False)
+    team: Team
+    type: PlayType
+
+
 class ShotEventPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     made: bool | None = None
     team: Team | None = None
     shot_type: ShotType | None = None
     player_number: int | None = None
     status: Status | None = None
-    t: float | None = Field(default=None, ge=0)
+    t: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _required_values(self):
+        for field in self.model_fields_set - {"player_number"}:
+            if getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        return self
 
 
 class ShotEventCreate(BaseModel):
-    t: float = Field(ge=0)
+    t: float = Field(ge=0, allow_inf_nan=False)
     team: Team
     shot_type: ShotType
     made: bool
@@ -64,6 +96,11 @@ class TeamLine(BaseModel):
     ftm: int
     fta: int
     pts: int
+    # Team rebounds and turnovers. None for a film drafted before they existed (rerun to add them).
+    oreb: int | None = None
+    dreb: int | None = None
+    reb: int | None = None
+    to: int | None = None
 
 
 class BoxScore(BaseModel):
@@ -73,7 +110,10 @@ class BoxScore(BaseModel):
 
 class ShotEventsRead(BaseModel):
     status: Literal["pending", "ready", "failed"]
-    events: list[ShotEventRead]
+    events: list[ShotEventRead]  # shots only
+    plays: list[PlayEventRead] = []  # team rebounds and turnovers
+    # False for a film drafted before rebounds and turnovers existed: rerun to add them.
+    has_plays: bool = False
     box_score: BoxScore
     # Extra to the review screen's contract: true when the jersey colors weren't given, so
     # Valley and Opponent may be swapped (POST .../events/swap-teams fixes it in one call).

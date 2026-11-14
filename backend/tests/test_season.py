@@ -35,7 +35,11 @@ GAME_ONE = {"events": [
     shot(20, "valley", "fg3", True, court_x=-20.0, court_y=5.0, zone="corner_three_left"),
     shot(30, "opponent", "fg2", False),
     shot(40, "valley", "ft", True),
-]}
+    {"type": "oreb", "t": 31, "team": "valley", "shot_type": "none", "made": False, "confidence": 0.75},
+    {"type": "dreb", "t": 33, "team": "opponent", "shot_type": "none", "made": False, "confidence": 0.75},
+    {"type": "to", "t": 35, "team": "valley", "shot_type": "none", "made": False, "confidence": 0.6},
+    {"type": "stl", "t": 35, "team": "opponent", "shot_type": "none", "made": False, "confidence": 0.5, "hidden": True},
+], "possession": {"method": "v2", "film_read": True}}
 GAME_TWO = {"events": [
     shot(5, "valley", "fg2", False),
     shot(15, "opponent", "fg3", True),
@@ -102,13 +106,20 @@ class SeasonTest(unittest.TestCase):
         self.assertEqual(body["pending"], 1)  # the broken film isn't pending or counted
         games = {g["upload_id"]: g for g in body["games"]}
         self.assertEqual(games[self.one_id]["box_score"]["valley"],
-                         {"fgm": 2, "fga": 2, "fg3m": 1, "fg3a": 1, "ftm": 1, "fta": 1, "pts": 6})
+                         {"fgm": 2, "fga": 2, "fg3m": 1, "fg3a": 1, "ftm": 1, "fta": 1, "pts": 6,
+                          "oreb": 1, "dreb": 0, "reb": 1, "to": 1})
+        # Game two was drafted before rebounds and turnovers existed: None, not 0.
+        self.assertEqual((games[self.one_id]["has_plays"], games[self.two_id]["has_plays"]), (True, False))
+        self.assertIsNone(games[self.two_id]["box_score"]["valley"]["to"])
+        self.assertEqual(body["plays_games"], 1)
         self.assertEqual(games[self.two_id]["box_score"]["valley"]["fga"], 1)  # deleted shot left out
         self.assertEqual((games[self.two_id]["shots"], games[self.two_id]["reviewed"]), (2, 1))
         self.assertEqual(body["totals"]["valley"],
-                         {"fgm": 2, "fga": 3, "fg3m": 1, "fg3a": 1, "ftm": 1, "fta": 1, "pts": 6})
+                         {"fgm": 2, "fga": 3, "fg3m": 1, "fg3a": 1, "ftm": 1, "fta": 1, "pts": 6,
+                          "oreb": 1, "dreb": 0, "reb": 1, "to": 1})
         self.assertEqual(body["totals"]["opponent"],
-                         {"fgm": 1, "fga": 2, "fg3m": 1, "fg3a": 1, "ftm": 0, "fta": 0, "pts": 3})
+                         {"fgm": 1, "fga": 2, "fg3m": 1, "fg3a": 1, "ftm": 0, "fta": 0, "pts": 3,
+                          "oreb": 0, "dreb": 1, "reb": 1, "to": 0})
         self.assertEqual(len(body["shots"]), 6)
         spot = next(s for s in body["shots"] if s["zone"] == "corner_three_left")
         self.assertEqual((spot["x"], spot["y"], spot["upload_id"]), (-20.0, 5.0, self.one_id))

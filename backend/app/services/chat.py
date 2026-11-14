@@ -32,7 +32,8 @@ Facts you must keep straight:
 - Stats come from AIM's drafted shots: made or missed, team, 2-pointer (fg2), 3-pointer (fg3) or free throw (ft), \
 the time in the film, and sometimes the shooter's jersey number. A coach may have reviewed and fixed them.
 - Field goals (FG) include both 2s and 3s. Points = 2 per made 2, 3 per made 3, 1 per made free throw.
-- AIM doesn't track rebounds, assists, turnovers, steals or fouls yet.
+- AIM also drafts team rebounds (offensive and defensive) and team turnovers, per team only, not per player \
+(get_box_score has them; null means that game hasn't had them drafted yet). It doesn't track assists, steals or fouls yet.
 
 Rules:
 - Use the tools to get every number. Never guess, estimate or round a stat, and never use outside knowledge about these teams or players.
@@ -52,9 +53,9 @@ TOOLS = [
     },
     {
         "name": "get_box_score",
-        "description": "Box score for one game: shooting and points for Valley and Opponent, per-player lines for "
-                       "shots that have a jersey number, how many shots have no number, and how many shots a "
-                       "coach has reviewed.",
+        "description": "Box score for one game: shooting, points, team rebounds (oreb, dreb, reb) and team "
+                       "turnovers (to) for Valley and Opponent, per-player shooting lines for shots that have a "
+                       "jersey number, how many shots have no number, and how many shots a coach has reviewed.",
         "input_schema": {
             "type": "object",
             "properties": {"upload_id": {"type": "integer", "description": "Game id from list_games"}},
@@ -130,9 +131,10 @@ def _upload(db: Session, team_id: int, upload_id) -> GameUpload | None:
     return db.query(GameUpload).filter(GameUpload.id == upload_id, GameUpload.team_id == team_id).first()
 
 
-def _live_events(db: Session, upload_id: int) -> list[ShotEvent]:
+def _live_events(db: Session, upload_id: int, kinds=(shot_events.SHOT,)) -> list[ShotEvent]:
+    """Events that count, shots only by default. Steals and assists are never read here."""
     return (db.query(ShotEvent)
-            .filter(ShotEvent.upload_id == upload_id, ShotEvent.status != "deleted")
+            .filter(ShotEvent.upload_id == upload_id, ShotEvent.status != "deleted", ShotEvent.type.in_(kinds))
             .order_by(ShotEvent.t.asc(), ShotEvent.id.asc()).all())
 
 
@@ -147,6 +149,9 @@ def _line(events) -> dict:
 
 def _box(db: Session, upload: GameUpload) -> dict:
     events = _live_events(db, upload.id)
+    plays = (db.query(ShotEvent)
+             .filter(ShotEvent.upload_id == upload.id, ShotEvent.type.in_(shot_events.PLAY_TYPES)).all())
+    team_plays = shot_events.box_score(plays, shot_events.has_plays(upload, plays))
     teams = {}
     for team in ("valley", "opponent"):
         mine = [e for e in events if e.team == team]
@@ -156,6 +161,7 @@ def _box(db: Session, upload: GameUpload) -> dict:
                 players[e.player_number].append(e)
         teams[team] = {
             **_line(mine),
+            **{k: team_plays[team][k] for k in ("oreb", "dreb", "reb", "to")},
             "players": [{"number": n, **_line(xs)} for n, xs in sorted(players.items())],
             "shots_without_number": sum(1 for e in mine if e.player_number is None),
         }

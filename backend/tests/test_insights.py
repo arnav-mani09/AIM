@@ -87,6 +87,32 @@ class FormulaTest(unittest.TestCase):
         self.assertEqual(insights.build([], 0)["opponent"]["lines"], ["No shots counted for them yet."])
 
 
+class PlayRatesTest(unittest.TestCase):
+    def test_turnover_and_rebound_rates(self):
+        shots = ([s("valley", "fg2", False) for _ in range(10)] + [s("valley", "ft", True) for _ in range(5)]
+                 + [s("opponent", "fg2", False) for _ in range(8)])
+        plays = ([{"type": "oreb", "team": "valley", "status": "draft"}] * 3
+                 + [{"type": "dreb", "team": "valley", "status": "draft"}] * 6
+                 + [{"type": "oreb", "team": "opponent", "status": "draft"}] * 2
+                 + [{"type": "dreb", "team": "opponent", "status": "draft"}] * 7
+                 + [{"type": "to", "team": "valley", "status": "draft"}] * 4
+                 + [{"type": "to", "team": "valley", "status": "deleted"}])
+        t = insights.build(shots, 1, plays, shots, 1)
+        v, o = t["valley"], t["opponent"]
+        self.assertEqual((v["oreb"], v["dreb"], v["reb"], v["to"], v["play_games"]), (3, 6, 9, 4, 1))
+        self.assertEqual(v["tov_pct"], round(100 * 4 / (10 + 0.44 * 5 - 3 + 4), 1))
+        self.assertEqual(v["oreb_pct"], 30.0)   # 3 / (3 + 7)
+        self.assertEqual(v["dreb_pct"], 75.0)   # 6 / (6 + 2)
+        self.assertEqual(o["to"], 0)
+        self.assertIn("turned it over 4 times", " ".join(v["lines"]))
+        self.assertEqual(set(insights.QUALITY.values()), {"fair"})
+
+    def test_no_plays_gives_none(self):
+        t = insights.build([s("valley", "fg2", True)], 1)["valley"]
+        self.assertEqual((t["play_games"], t["oreb"], t["tov_pct"]), (0, None, None))
+        self.assertFalse(any("turned it over" in line for line in t["lines"]))
+
+
 def ev(t, team, shot_type, made, **detail):
     return {"type": "shot", "t": t, "team": team, "shot_type": shot_type, "made": made, "confidence": 0.7,
             "player_number": None, "rim": None, "parts": {}, "detail": detail}
@@ -116,6 +142,9 @@ class InsightsApiTest(unittest.TestCase):
             ev(10, "opponent", "fg3", True, court_x=-21.0, court_y=3.0, zone="corner_three_left"),
             ev(20, "opponent", "fg2", False, court_x=0.0, court_y=2.0, zone="restricted_area"),
             ev(30, "valley", "fg2", True, court_x=0.0, court_y=2.0, zone="restricted_area"),
+            {"type": "oreb", "t": 31, "team": "valley", "shot_type": "none", "made": False, "confidence": 0.75},
+            {"type": "to", "t": 32, "team": "valley", "shot_type": "none", "made": False, "confidence": 0.6},
+            {"type": "ast", "t": 29, "team": "valley", "shot_type": "none", "made": False, "confidence": 0.4},
         ], **done)
         two = film(team.id, "Game two", [
             ev(5, "opponent", "fg2", True, court_x=0.0, court_y=2.0),
@@ -163,6 +192,14 @@ class InsightsApiTest(unittest.TestCase):
         self.assertEqual(zones["corner3"]["points"], 3)
         self.assertEqual(body["teams"]["valley"]["pts"], 2)
         self.assertIn("Pace", body["coming_soon"])
+        self.assertNotIn("Turnover rate", body["coming_soon"])
+        self.assertEqual(body["quality"]["tov_pct"], "fair")
+        # Only game one has rebounds and turnovers: rates over that game alone.
+        val = body["teams"]["valley"]
+        self.assertEqual((val["play_games"], val["oreb"], val["to"]), (1, 1, 1))
+        self.assertEqual(val["oreb_pct"], 100.0)  # 1 / (1 + opponent's 0 dreb)
+        self.assertEqual(val["tov_pct"], round(100 * 1 / (1 + 0 - 1 + 1), 1))
+        self.assertIn("1 of 2 games", " ".join(val["lines"]))
 
     def test_one_game(self):
         body = self.client.get(self.url, params={"upload_ids": [self.two]}).json()

@@ -1,5 +1,6 @@
-"""Team shooting insights (advanced shooting stats, zones, scouting lines) for Valley and the
-Opponent, over the films the coach picks (?upload_ids=1&upload_ids=2) or every ready film."""
+"""Team insights (advanced shooting stats, zones, team rebound and turnover rates, scouting lines)
+for Valley and the Opponent, over the films the coach picks (?upload_ids=1&upload_ids=2) or every
+ready film."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -30,14 +31,26 @@ def read_insights(
         raise HTTPException(status_code=404, detail="Film not found")
     ready = [u for u in uploads if shot_events.review_status(u) == "ready"]
 
-    shots = []
+    shots, plays, play_shots, play_games = [], [], [], 0
     if ready:
         rows = (
             db.query(ShotEvent)
-            .filter(ShotEvent.upload_id.in_([u.id for u in ready]), ShotEvent.status != "deleted")
+            .filter(ShotEvent.upload_id.in_([u.id for u in ready]),
+                    ShotEvent.type.in_(shot_events.VISIBLE_TYPES))
             .all()
         )
-        shots = [ShotEventRead.model_validate(e).model_dump() for e in rows]
+        by_upload: dict[int, list[ShotEvent]] = {u.id: [] for u in ready}
+        for e in rows:
+            by_upload[e.upload_id].append(e)
+        for u in ready:
+            mine = by_upload[u.id]
+            game_shots = [ShotEventRead.model_validate(e).model_dump() for e in mine
+                          if e.type == shot_events.SHOT and e.status != "deleted"]
+            shots += game_shots
+            if shot_events.has_plays(u, mine):
+                play_games += 1
+                play_shots += game_shots
+                plays += [{"type": e.type, "team": e.team, "status": e.status} for e in mine if shot_events.is_play(e)]
 
     games = [
         InsightsGame(
@@ -52,6 +65,7 @@ def read_insights(
     return InsightsRead(
         games=games,
         skipped=len(uploads) - len(ready) if upload_ids else 0,
-        teams=insights.build(shots, len(ready)),
+        teams=insights.build(shots, len(ready), plays, play_shots, play_games),
         coming_soon=insights.COMING_SOON,
+        quality=insights.QUALITY,
     )

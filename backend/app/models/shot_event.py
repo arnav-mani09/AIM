@@ -6,7 +6,8 @@ from app.db.base_class import Base
 
 
 class ShotEvent(Base):
-    """One drafted shot from the model, and the coach's fixes to it.
+    """One drafted event from the model (a shot, or a team rebound or turnover), and the coach's
+    fixes to it. See app/services/shot_events.py for the types.
 
     `original` keeps the model's call exactly as drafted (with its confidence parts), so every
     coach fix can become training data later. A shot the coach adds by hand has no original.
@@ -16,10 +17,11 @@ class ShotEvent(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     upload_id = Column(Integer, ForeignKey("game_upload.id", ondelete="CASCADE"), nullable=False, index=True)
+    # "shot", "oreb", "dreb", "to"; "stl" and "ast" are stored for training but never shown
     type = Column(String, nullable=False, default="shot", server_default="shot")
     t = Column(Float, nullable=False)  # seconds into the film
     team = Column(String, nullable=False)  # "valley" or "opponent"
-    shot_type = Column(String, nullable=False)  # "fg2", "fg3" or "ft"
+    shot_type = Column(String, nullable=False)  # "fg2", "fg3" or "ft"; "none" for other types
     made = Column(Boolean, nullable=False)
     confidence = Column(Float, nullable=False)  # 0 to 1
     player_number = Column(Integer, nullable=True)

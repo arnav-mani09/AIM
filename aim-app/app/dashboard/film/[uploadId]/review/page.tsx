@@ -1,6 +1,7 @@
 "use client";
 
-// Coach review screen: AIM drafts every shot, the coach confirms or fixes each one.
+// Coach review screen: AIM drafts shots automatically; coaches can optionally correct them. Team rebounds
+// and turnovers sit in their own simple list (PlaysPanel).
 // Least sure shots come first. Everything works with big buttons or keyboard shortcuts.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -10,8 +11,10 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ChatPanel from "@/components/ChatPanel";
 import { FilmShotChart } from "@/components/FilmShotChart";
 import { GameInsights } from "@/components/GameInsights";
+import { PlaysPanel } from "@/components/PlaysPanel";
 import { fetchFilmPlaybackUrl } from "@/lib/teamApi";
 import {
+  addReviewPlay,
   addReviewShot,
   boxScore,
   EventPatch,
@@ -19,12 +22,17 @@ import {
   forceMock,
   isUsingMock,
   patchReviewEvent,
+  patchReviewPlay,
+  PlayEvent,
+  PlayPatch,
+  PlayType,
   rerunReviewEvents,
   ReviewData,
   swapReviewTeams,
   ShotEvent,
   ShotType,
   TeamLine,
+  TeamSide,
 } from "@/lib/reviewApi";
 
 type Filter = "all" | "unsure" | "unreviewed";
@@ -55,6 +63,10 @@ export default function ReviewPage() {
   const [token, setToken] = useState<string | null>(null);
   const [data, setData] = useState<ReviewData | null>(null);
   const [events, setEvents] = useState<ShotEvent[]>([]);
+  const [plays, setPlays] = useState<PlayEvent[]>([]);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const loadVersionRef = useRef(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
@@ -82,44 +94,67 @@ export default function ReviewPage() {
   }, [mockOnly, router, teamParam]);
 
   const load = useCallback(() => {
-    if (!token) return;
+    if (!token || savingRef.current) return;
+    const version = ++loadVersionRef.current;
     fetchReviewEvents(token, teamId, uploadId)
       .then((result) => {
+        if (version !== loadVersionRef.current) return;
         setData(result);
         setEvents(result.events);
+        setPlays(result.plays ?? []);
         setLoadError(null);
       })
-      .catch((err) => setLoadError(err instanceof Error ? err.message : "Couldn't load the shots."));
+      .catch((err) => {
+        if (version === loadVersionRef.current) setLoadError(err instanceof Error ? err.message : "Couldn't load the shots.");
+      });
   }, [token, teamId, uploadId]);
 
   useEffect(load, [load]);
 
   // Films uploaded before the shot finder existed (or after it improves) need it run again.
   const rerun = useCallback(() => {
-    if (!token) return;
+    if (!token || savingRef.current) return;
+    savingRef.current = true;
+    loadVersionRef.current += 1;
+    setSaving(true);
     setActionError(null);
     rerunReviewEvents(token, teamId, uploadId)
       .then((result) => {
         setData(result);
         setEvents(result.events);
+        setPlays(result.plays ?? []);
+        setLoadError(null);
       })
-      .catch((err) => setActionError(err instanceof Error ? err.message : "Couldn't start finding shots."));
+      .catch((err) => setActionError(err instanceof Error ? err.message : "Couldn't start finding shots."))
+      .finally(() => {
+        savingRef.current = false;
+        setSaving(false);
+      });
   }, [token, teamId, uploadId]);
 
   // Swap teams: flip Valley and Opponent on every shot when AIM picked the wrong team.
   const [swapping, setSwapping] = useState(false);
   const swapTeams = useCallback(() => {
-    if (!token) return;
+    if (!token || savingRef.current || data?.status !== "ready") return;
+    savingRef.current = true;
+    loadVersionRef.current += 1;
+    setSaving(true);
     setActionError(null);
     setSwapping(true);
     swapReviewTeams(token, teamId, uploadId)
       .then((result) => {
         setData(result);
         setEvents(result.events);
+        setPlays(result.plays ?? []);
+        setLoadError(null);
       })
       .catch((err) => setActionError(err instanceof Error ? err.message : "Couldn't swap the teams."))
-      .finally(() => setSwapping(false));
-  }, [token, teamId, uploadId]);
+      .finally(() => {
+        savingRef.current = false;
+        setSaving(false);
+        setSwapping(false);
+      });
+  }, [token, teamId, uploadId, data?.status]);
 
   // Keep checking while AIM is still working on the film.
   useEffect(() => {
@@ -151,7 +186,8 @@ export default function ReviewPage() {
 
   const selected = events.find((e) => e.id === selectedId) ?? null;
   const reviewed = events.filter((e) => e.status !== "draft").length;
-  const lines = useMemo(() => boxScore(events), [events]);
+  const hasPlays = Boolean(data?.has_plays) || plays.length > 0;
+  const lines = useMemo(() => boxScore(events, plays, hasPlays), [events, plays, hasPlays]);
 
   const playFrom = useCallback((t: number) => {
     const video = videoRef.current;
@@ -181,26 +217,30 @@ export default function ReviewPage() {
     [queue, selectedId, select],
   );
 
-  // Change a shot right away on screen, then save. If saving fails, put it back and say so.
   const update = useCallback(
     async (event: ShotEvent, patch: EventPatch) => {
-      if (!token) return;
-      const before = event;
-      setEvents((all) => all.map((e) => (e.id === event.id ? { ...e, ...patch } : e)));
+      if (!token || savingRef.current || data?.status !== "ready") return false;
+      savingRef.current = true;
+      loadVersionRef.current += 1;
+      setSaving(true);
       setActionError(null);
       try {
         const saved = await patchReviewEvent(token, teamId, uploadId, event.id, patch);
         setEvents((all) => all.map((e) => (e.id === saved.id ? saved : e)));
+        return true;
       } catch (err) {
-        setEvents((all) => all.map((e) => (e.id === before.id ? before : e)));
         setActionError(
-          `Your change to the shot at ${clock(before.t)} didn't save, so it was undone. ${
+          `Your change to the shot at ${clock(event.t)} didn't save. The last saved values are still shown. ${
             err instanceof Error ? err.message : ""
           }`,
         );
+        return false;
+      } finally {
+        savingRef.current = false;
+        setSaving(false);
       }
     },
-    [token, teamId, uploadId],
+    [token, teamId, uploadId, data?.status],
   );
 
   const fix = useCallback(
@@ -210,23 +250,27 @@ export default function ReviewPage() {
     [selected, update],
   );
 
-  const confirmAndNext = useCallback(() => {
-    if (!selected) return;
+  const confirmAndNext = useCallback(async () => {
+    if (!selected || savingRef.current || data?.status !== "ready") return;
     const index = queue.findIndex((e) => e.id === selected.id);
     // In "Not reviewed yet" the confirmed shot leaves the list, so the next one slides into its place.
     const next = filter === "unreviewed" ? queue[index + 1] ?? queue[index - 1] : queue[index + 1];
     if (selected.status === "draft" || selected.status === "deleted") {
-      update(selected, { status: selected.status === "deleted" ? "fixed" : "confirmed" });
+      const saved = await update(selected, { status: selected.status === "deleted" ? "fixed" : "confirmed" });
+      if (!saved) return;
     }
     if (next && next.id !== selected.id) select(next);
-  }, [selected, queue, filter, update, select]);
+  }, [selected, queue, filter, update, select, data?.status]);
 
   const remove = useCallback(() => {
     if (selected && selected.status !== "deleted") update(selected, { status: "deleted" });
   }, [selected, update]);
 
   const addShot = useCallback(async () => {
-    if (!token) return;
+    if (!token || savingRef.current || data?.status !== "ready") return;
+    savingRef.current = true;
+    loadVersionRef.current += 1;
+    setSaving(true);
     const t = Math.round((videoRef.current?.currentTime ?? selected?.t ?? 0) * 10) / 10;
     setActionError(null);
     try {
@@ -240,8 +284,54 @@ export default function ReviewPage() {
       setSelectedId(created.id);
     } catch (err) {
       setActionError(`The new shot didn't save. ${err instanceof Error ? err.message : ""}`);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
-  }, [token, teamId, uploadId, selected]);
+  }, [token, teamId, uploadId, selected, data?.status]);
+
+  const updatePlay = useCallback(
+    async (play: PlayEvent, patch: PlayPatch) => {
+      if (!token || savingRef.current || data?.status !== "ready") return;
+      savingRef.current = true;
+      loadVersionRef.current += 1;
+      setSaving(true);
+      setActionError(null);
+      try {
+        const saved = await patchReviewPlay(token, teamId, uploadId, play.id, patch);
+        setPlays((all) => all.map((p) => (p.id === saved.id ? saved : p)));
+      } catch (err) {
+        setActionError(
+          `Your change at ${clock(play.t)} didn't save. The last saved values are still shown. ${err instanceof Error ? err.message : ""}`,
+        );
+      } finally {
+        savingRef.current = false;
+        setSaving(false);
+      }
+    },
+    [token, teamId, uploadId, data?.status],
+  );
+
+  const addPlay = useCallback(
+    async (type: PlayType, team: TeamSide) => {
+      if (!token || savingRef.current || data?.status !== "ready") return;
+      savingRef.current = true;
+      loadVersionRef.current += 1;
+      setSaving(true);
+      const t = Math.round((videoRef.current?.currentTime ?? 0) * 10) / 10;
+      setActionError(null);
+      try {
+        const created = await addReviewPlay(token, teamId, uploadId, { t, team, type });
+        setPlays((all) => [...all, created]);
+      } catch (err) {
+        setActionError(`That didn't save. ${err instanceof Error ? err.message : ""}`);
+      } finally {
+        savingRef.current = false;
+        setSaving(false);
+      }
+    },
+    [token, teamId, uploadId, data?.status],
+  );
 
   // Keyboard shortcuts. Ignored while typing in a box.
   useEffect(() => {
@@ -285,8 +375,9 @@ export default function ReviewPage() {
         <div>
           <h1 className="text-3xl font-semibold text-ink">Review shots</h1>
           <p className="mt-1 text-sm text-subtext">
-            AIM drafted these shots. Check each one, fix anything wrong, and confirm it. The ones AIM is least
-            sure about are at the top.
+            Stats and insights are available automatically when processing finishes; no full-game review or
+            confirmation is required. These are estimates from film, not verified results. Optionally correct
+            anything that looks wrong. The lowest model scores are at the top.
           </p>
         </div>
         {isUsingMock() && (
@@ -304,6 +395,7 @@ export default function ReviewPage() {
           </button>
         </div>
       )}
+      {saving && <p role="status" className="text-sm text-subtext">Saving… Last saved counts remain shown.</p>}
 
       {/* Swap teams: a banner when AIM guessed which team is yours, a small link otherwise. */}
       {data?.status === "ready" &&
@@ -312,7 +404,7 @@ export default function ReviewPage() {
             <p>AIM guessed which team is yours. Wrong? Swap teams.</p>
             <button
               onClick={swapTeams}
-              disabled={swapping}
+              disabled={saving}
               className="rounded-2xl bg-ink px-4 py-2 font-semibold text-white disabled:opacity-60"
             >
               {swapping ? "Swapping…" : "Swap teams"}
@@ -322,7 +414,7 @@ export default function ReviewPage() {
           <div className="flex justify-end">
             <button
               onClick={swapTeams}
-              disabled={swapping}
+              disabled={saving}
               className="text-xs text-subtext underline hover:text-ink disabled:opacity-60"
             >
               {swapping ? "Swapping…" : "Wrong team labels? Swap teams"}
@@ -330,16 +422,17 @@ export default function ReviewPage() {
           </div>
         ))}
 
-      {loadError ? (
+      {loadError && (
         <section className="section-card">
           <p className="text-red-600">{loadError}</p>
           <button onClick={load} className="mt-4 rounded-2xl bg-accent px-4 py-2 font-semibold text-white">
             Try again
           </button>
         </section>
-      ) : !data ? (
-        <p>Loading shots…</p>
-      ) : data.status === "pending" ? (
+      )}
+      {!data ? (
+        !loadError && <p>Loading shots…</p>
+      ) : data.status === "pending" && !events.length && !plays.length ? (
         <section className="section-card">
           <h2 className="text-xl font-semibold text-ink">AIM is still working on this film</h2>
           <p className="mt-2 text-subtext">
@@ -347,22 +440,28 @@ export default function ReviewPage() {
             checks again on its own.
           </p>
           <p className="mt-4 text-sm text-subtext">Uploaded this film before shots were added, or stuck for over an hour?</p>
-          <button onClick={rerun} className="mt-2 rounded-2xl bg-accent px-4 py-2 font-semibold text-white">
+          <button disabled={saving} onClick={rerun} className="mt-2 rounded-2xl bg-accent px-4 py-2 font-semibold text-white">
             Find shots now
           </button>
         </section>
-      ) : data.status === "failed" ? (
+      ) : data.status === "failed" && !events.length && !plays.length ? (
         <section className="section-card">
           <h2 className="text-xl font-semibold text-red-600">AIM couldn&apos;t finish this film</h2>
           <p className="mt-2 text-subtext">
             Something went wrong while finding shots. Try again below, or contact us and we&apos;ll look into it.
           </p>
-          <button onClick={rerun} className="mt-4 rounded-2xl bg-accent px-4 py-2 font-semibold text-white">
+          <button disabled={saving} onClick={rerun} className="mt-4 rounded-2xl bg-accent px-4 py-2 font-semibold text-white">
             Try finding shots again
           </button>
         </section>
       ) : (
         <>
+          {data.status !== "ready" && (
+            <section className="section-card text-sm text-subtext">
+              <p>{data.status === "pending" ? "Processing is in progress." : "Processing failed."} Last saved events remain below; corrections are paused until processing finishes.</p>
+              {data.status === "failed" && <button disabled={saving} onClick={rerun} className="mt-2 font-semibold text-accent">Retry processing</button>}
+            </section>
+          )}
           <section className="section-card flex flex-col gap-4">
             {videoUrl ? (
               <video ref={videoRef} controls src={videoUrl} className="w-full rounded-xl border border-stroke" />
@@ -376,13 +475,25 @@ export default function ReviewPage() {
 
           <BoxScore valley={lines.valley} opponent={lines.opponent} />
 
+          <PlaysPanel
+            plays={plays}
+            hasPlays={hasPlays}
+            busy={saving || data.status !== "ready"}
+            onWatch={playFrom}
+            onSwitchTeam={(p) => updatePlay(p, { team: p.team === "valley" ? "opponent" : "valley" })}
+            onDelete={(p) => updatePlay(p, { status: "deleted" })}
+            onRestore={(p) => updatePlay(p, { status: "fixed" })}
+            onAdd={addPlay}
+            onFind={rerun}
+          />
+
           <FilmShotChart events={events} onPick={select} />
 
           <GameInsights
-            token={mockOnly ? null : token}
+            token={isUsingMock() ? null : token}
             teamId={teamId}
             uploadId={uploadId}
-            version={events.map((e) => `${e.id}${e.team}${e.shot_type}${e.made}${e.status}`).join()}
+            version={JSON.stringify([data.status, events, plays])}
           />
 
           <ChatPanel token={token} teamId={teamId} uploadId={uploadId} onSeek={playFrom} />
@@ -427,7 +538,7 @@ export default function ReviewPage() {
               )}
             </div>
 
-            <div className="section-card flex flex-col gap-5">
+            <fieldset disabled={saving || data.status !== "ready"} className="section-card flex min-w-0 flex-col gap-5">
               {selected ? (
                 <ShotEditor
                   event={selected}
@@ -448,7 +559,7 @@ export default function ReviewPage() {
                 + Add shot here (missed by AIM)
               </button>
               <Shortcuts />
-            </div>
+            </fieldset>
           </section>
         </>
       )}
@@ -462,7 +573,7 @@ function ProgressBar({ reviewed, total }: { reviewed: number; total: number }) {
     <div>
       <div className="flex justify-between text-sm font-semibold text-ink">
         <span>
-          Reviewed {reviewed} of {total}
+          Optional checks: {reviewed} of {total} shots checked, corrected or deleted
         </span>
         <span>{share}%</span>
       </div>
@@ -481,14 +592,22 @@ function BoxScore({ valley, opponent }: { valley: TeamLine; opponent: TeamLine }
   return (
     <section className="section-card overflow-x-auto">
       <h2 className="text-xl font-semibold text-ink">Box score</h2>
-      <p className="text-sm text-subtext">Updates as you fix shots. Deleted shots don&apos;t count.</p>
-      <table className="mt-4 w-full min-w-[28rem] text-left text-lg">
+      <p className="text-sm text-subtext">
+        Includes automatic drafts without requiring confirmation. Updates after corrections save; deleted events
+        don&apos;t count. Estimates may miss or misclassify events. Rebounds and turnovers are team totals and
+        rougher than the shooting. A dash means unavailable, not zero.
+      </p>
+      <table className="mt-4 w-full min-w-[40rem] text-left text-lg">
         <thead className="text-xs uppercase tracking-[0.14em] text-subtext">
           <tr>
             <th className="py-2">Team</th>
             <th>FG</th>
             <th>3PT</th>
             <th>FT</th>
+            <th>OREB</th>
+            <th>DREB</th>
+            <th>REB</th>
+            <th>TO</th>
             <th>Points</th>
           </tr>
         </thead>
@@ -505,6 +624,10 @@ function BoxScore({ valley, opponent }: { valley: TeamLine; opponent: TeamLine }
               <td>
                 {line.ftm}/{line.fta}
               </td>
+              <td>{line.oreb ?? "-"}</td>
+              <td>{line.dreb ?? "-"}</td>
+              <td>{line.reb ?? "-"}</td>
+              <td>{line.to ?? "-"}</td>
               <td className="text-2xl font-bold text-ink">{line.pts}</td>
             </tr>
           ))}
@@ -542,7 +665,7 @@ function EventRow({ event, active, onClick }: { event: ShotEvent; active: boolea
           </span>
         </span>
         <span className="flex items-center gap-2">
-          <span className="text-xs text-subtext">{Math.round(event.confidence * 100)}% sure</span>
+          {event.status === "draft" && <span className="text-xs text-subtext">Model score {Math.round(event.confidence * 100)}%</span>}
           <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${badge[1]}`}>{badge[0]}</span>
         </span>
       </button>

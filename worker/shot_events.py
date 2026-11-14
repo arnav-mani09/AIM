@@ -15,6 +15,9 @@ Steps 1 to 3 use the tracks alone; step 4 also needs the film:
    the film. It reads only the frames at each shot's takeoff (seeking, not the whole film), so
    the film can be a signed R2 link. Without film every field goal is "fg2" with a low
    shot-type confidence kept out of the call's confidence, so it doesn't flatten the review order.
+5. Team rebounds and turnovers: worker/possession_events.py (ml/tools/possession.py version 2),
+   from who holds the ball, with each holder's jersey read from the film (front to back, about
+   2 minutes; best with a local file). Steals and assists come out too but are marked hidden.
 
 Every event gets one confidence from 0 to 1: the weakest of its parts (attempt, make, team,
 free throw, and 2 or 3 when the film was read). The parts are kept in the event's "parts" so the review screen can say why.
@@ -51,7 +54,9 @@ JERSEY_BGR = {
     "purple": (120, 40, 100),
 }
 
-EVENTS_VERSION = 3   # 2: field goals labeled 2 or 3 from the film. 3: court spot and zone per field goal
+EVENTS_VERSION = 4   # 2: field goals labeled 2 or 3 from the film. 3: court spot and zone per field goal.
+                     # 4: team rebounds and turnovers (steals and assists hidden)
+PLAY_TYPES = ("oreb", "dreb", "to")  # non-shot events the site shows and counts
 
 
 def _lab(bgr):
@@ -118,24 +123,32 @@ def shot_type_confidence(s: dict) -> float | None:
     return round(sure, 2)
 
 
-def box_score(events: list[dict]) -> dict:
-    """Team totals from events that aren't deleted. Same shape the API returns."""
+def box_score(events: list[dict], plays_known: bool = True) -> dict:
+    """Team totals from events that aren't deleted or hidden. Same shape the API returns."""
     out = {}
     for team in ("valley", "opponent"):
-        mine = [e for e in events if e["team"] == team and e.get("status") != "deleted"]
-        fg = [e for e in mine if e["shot_type"] in ("fg2", "fg3")]
-        fg3 = [e for e in mine if e["shot_type"] == "fg3"]
-        ft = [e for e in mine if e["shot_type"] == "ft"]
+        mine = [e for e in events if e["team"] == team and e.get("status") != "deleted" and not e.get("hidden")]
+        shots = [e for e in mine if e.get("type", "shot") == "shot"]
+        fg = [e for e in shots if e["shot_type"] in ("fg2", "fg3")]
+        fg3 = [e for e in shots if e["shot_type"] == "fg3"]
+        ft = [e for e in shots if e["shot_type"] == "ft"]
         made = lambda xs: sum(1 for e in xs if e["made"])  # noqa: E731
         fgm, fg3m, ftm = made(fg), made(fg3), made(ft)
+        plays = {k: sum(1 for e in mine if e.get("type") == k) for k in PLAY_TYPES}
         out[team] = {"fgm": fgm, "fga": len(fg), "fg3m": fg3m, "fg3a": len(fg3),
-                     "ftm": ftm, "fta": len(ft), "pts": 2 * fgm + fg3m + ftm}
+                     "ftm": ftm, "fta": len(ft), "pts": 2 * fgm + fg3m + ftm,
+                     "oreb": plays["oreb"], "dreb": plays["dreb"], "reb": plays["oreb"] + plays["dreb"],
+                     "to": plays["to"]}
+        if not plays_known:
+            out[team].update(oreb=None, dreb=None, reb=None, to=None)
     return out
 
 
 def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: str | None = None,
-                 video: str | None = None) -> dict:
-    """video: the film (a path or a link) for 2s and 3s. Without it field goals stay "fg2"."""
+                 video: str | None = None, possession: bool = True) -> dict:
+    """video: the film (a path or a link) for 2s and 3s and for holders' jerseys. Without it field
+    goals stay "fg2" and rebounds and turnovers use the tracker's team split (lower confidence).
+    possession=False skips rebounds and turnovers."""
     window = game_window.find_window(doc)
     span = (window["start"], window["end"]) if window.get("found") else (0.0, doc["frames"][-1][0])
     half_break = window.get("halftime") if window.get("found") else None
@@ -196,6 +209,17 @@ def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: s
                                              "shooter_track", "shooter_jersey", "ball_score", "rim_score",
                                              "margin", "arc_source", "take", "court_x", "court_y", "zone")},
         })
+    possession_info = None
+    if possession:
+        try:
+            import possession_events
+
+            got = possession_events.build_possession(doc, labeled, info, span, half_break, names, video)
+            events += got["events"]
+            possession_info = got["info"]
+        except Exception as exc:  # rebounds and turnovers failing shouldn't lose the shots
+            possession_info = {"error": f"{exc}"[:300]}
+        events.sort(key=lambda e: e["t"])
     return {
         "version": EVENTS_VERSION,
         "window": {"start": span[0], "end": span[1], "found": bool(window.get("found")),
@@ -205,8 +229,9 @@ def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: s
         "votes": info["votes"],
         "dropped": {"warmup": info["warmup_dropped"], "dead_ball": info["dead_ball_dropped"]},
         "three_point": three_point,
+        "possession": possession_info,
         "events": events,
-        "box_score": box_score(events),
+        "box_score": box_score(events, bool(possession_info) and not possession_info.get("error")),
     }
 
 
@@ -221,17 +246,25 @@ def main() -> None:
     parser.add_argument("--opponent-jersey")
     parser.add_argument("--video", help="film path or link, for 2s and 3s")
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--no-possession", action="store_true", help="skip rebounds and turnovers")
     args = parser.parse_args()
     opener = gzip.open if args.tracks.suffix == ".gz" else open
     with opener(args.tracks, "rt") as f:
         doc = json.load(f)
-    result = build_events(doc, args.valley_jersey, args.opponent_jersey, args.video)
+    result = build_events(doc, args.valley_jersey, args.opponent_jersey, args.video, not args.no_possession)
     print(f"3-point: {result['three_point']}")
     print(f"window {result['window']['start']} to {result['window']['end']}, halftime {result['window']['halftime']}, "
           f"teams guessed: {result['teams_guessed']}, {len(result['events'])} events")
     for team, row in result["box_score"].items():
         print(f"  {team:9} FG {row['fgm']}/{row['fga']}  3PT {row['fg3m']}/{row['fg3a']}  "
-              f"FT {row['ftm']}/{row['fta']}  PTS {row['pts']}")
+              f"FT {row['ftm']}/{row['fta']}  PTS {row['pts']}  OREB {row['oreb']}  DREB {row['dreb']}  "
+              f"REB {row['reb']}  TO {row['to']}")
+    if result.get("possession"):
+        print(f"possession: {result['possession']}")
+        hidden = [e for e in result["events"] if e.get("hidden")]
+        for team in ("valley", "opponent"):
+            print(f"  hidden {team:9} STL {sum(e['type'] == 'stl' and e['team'] == team for e in hidden)}  "
+                  f"AST {sum(e['type'] == 'ast' and e['team'] == team for e in hidden)}")
     if args.out:
         args.out.write_text(json.dumps(result, indent=1))
         print("wrote", args.out)

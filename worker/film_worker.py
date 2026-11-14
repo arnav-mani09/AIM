@@ -242,9 +242,13 @@ def _detect_players(source_key: str) -> dict:
 # from detection so it can be rerun on old uploads in a minute or two.
 # 2s and 3s need film frames at each shot. Seeking over a signed link proved unreliable
 # (OpenCV's reader stalls on partial reads), so the film is downloaded first, the same as in
-# make_proxy, and only the frames at the shots are decoded. The 720p playback copy is preferred:
-# it's about 2.5 times smaller than the original and the court lines are just as clear at the
-# 960 px the 3-point tool works at.
+# make_proxy, and only the frames at the shots are decoded.
+# Team rebounds and turnovers (possession_events.py, ml/tools/possession.py) read one frame per
+# ball hold from the same downloaded film, front to back (about 2 minutes a game on CPU). The
+# original is preferred: the jersey pixel vote was tuned on it, and on the 720p playback copy
+# (about half the size) Riordan's Opponent turnovers went from 9 to 12 (Hudl 8). The playback
+# copy is the fallback, and if the film can't be read at all rebounds and turnovers use the
+# tracker's team split with lower confidence.
 _tools = Path(__file__).resolve().parent.parent / "ml" / "tools"
 events_image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -255,6 +259,8 @@ events_image = (
     .add_local_file(_tools / "shot_split.py", "/root/shot_split.py")
     .add_local_file(_tools / "game_window.py", "/root/game_window.py")
     .add_local_file(_tools / "three_point.py", "/root/three_point.py")
+    .add_local_file(Path(__file__).with_name("possession_events.py"), "/root/possession_events.py")
+    .add_local_file(_tools / "possession.py", "/root/possession.py")
 )
 
 
@@ -263,13 +269,14 @@ events_image = (
     secrets=[modal.Secret.from_name("aim-r2"), modal.Secret.from_name("aim-sentry")],
     cpu=4.0,
     memory=8192,
-    timeout=15 * 60,
+    timeout=25 * 60,  # the backend gives up after EVENTS_STUCK_AFTER (30 min)
 )
 def make_events(tracks_key: str, valley_jersey: str | None = None, opponent_jersey: str | None = None,
                 environment: str = "development", film_key: str | None = None) -> dict:
     """Write <stem>.events.json next to the tracks in R2 and return it (events plus box score).
-    film_key is the film for 2s and 3s; by default the playback copy, else the original, found
-    next to the tracks."""
+    Events are shots, team rebounds and turnovers, and hidden steals and assists. film_key is the
+    film for 2s and 3s and holders' jerseys; by default the original, else the playback copy,
+    found next to the tracks."""
     import sentry_sdk
 
     _init_sentry(environment)
@@ -287,14 +294,15 @@ VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".mkv", ".avi")
 
 def _find_film(r2, bucket: str, tracks_key: str) -> str | None:
     """The film the tracks came from: tracks are <stem>.tracks-<model>.json.gz next to <stem>.<ext>.
-    Prefer the 720p playback copy, then the original."""
+    Prefer the original (the frame size the tracks and the jersey vote were made at), then the
+    720p playback copy."""
     stem = tracks_key.split(".tracks-")[0]
     keys = [o["Key"] for o in r2.list_objects_v2(Bucket=bucket, Prefix=stem + ".").get("Contents", [])]
-    proxy = f"{stem}.proxy-720p.mp4"
-    if proxy in keys:
-        return proxy
     originals = [k for k in keys if k.lower().endswith(VIDEO_EXTENSIONS) and ".proxy-" not in k]
-    return originals[0] if originals else None
+    if originals:
+        return originals[0]
+    proxy = f"{stem}.proxy-720p.mp4"
+    return proxy if proxy in keys else None
 
 
 def _make_events(tracks_key: str, valley_jersey: str | None, opponent_jersey: str | None,
@@ -318,7 +326,7 @@ def _make_events(tracks_key: str, valley_jersey: str | None, opponent_jersey: st
             if film_key:
                 video = Path(tmp) / ("film" + Path(film_key).suffix)
                 r2.download_file(bucket, film_key, str(video))
-        except Exception as exc:  # no film just means no 2s and 3s; the shots still go out
+        except Exception as exc:  # no film just means no 2s and 3s and rougher teams on rebounds; the shots still go out
             print(f"[EVENTS] Could not get the film for {tracks_key}: {exc}")
             video, film_key = None, None
         timings["film_download"] = round(time.monotonic() - started, 1)

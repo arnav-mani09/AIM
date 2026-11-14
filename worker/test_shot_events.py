@@ -41,7 +41,8 @@ class BoxScoreTest(unittest.TestCase):
             {"team": "valley", "shot_type": "fg3", "made": True, "status": "deleted"},
         ]
         self.assertEqual(shot_events.box_score(events)["valley"],
-                         {"fgm": 2, "fga": 3, "fg3m": 1, "fg3a": 2, "ftm": 1, "fta": 1, "pts": 6})
+                         {"fgm": 2, "fga": 3, "fg3m": 1, "fg3a": 2, "ftm": 1, "fta": 1, "pts": 6,
+                          "oreb": 0, "dreb": 0, "reb": 0, "to": 0})
 
 
 class CourtSpotTest(unittest.TestCase):

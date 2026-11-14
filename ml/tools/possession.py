@@ -28,9 +28,11 @@ Version 2 (default), rules, not a model:
   the dribbler), the basket on screen is weak evidence, and a change costs SWITCH_COST
   (Viterbi, per half). Touches under BLIP seconds with no shot are merged away. Changes land
   when the other team first has the ball, not when the camera crosses half court.
-- Rebound: the first clearly-colored holder after a live miss. The same team shooting again at
-  the same basket is an offensive rebound; a referee first is a team rebound (not counted);
-  nobody seen means the defense.
+- Rebound: sustained uncontested control after a live miss, bounded by the next shot and half.
+  Current jersey evidence is separate from track identity. Short/contested touches, unknown
+  teams and repeat shots are uncertain evidence, not observed player rebounds. Exclusive
+  referee control before any touch is dead ball. Missing control keeps a low-confidence
+  defensive inference rather than silently discarding an unobserved true rebound.
 - Turnover: a change of possession not explained by a make, a defensive rebound, free throws, a
   period break, a timeout or a ball that went to the rim. Steal: one with no referee handling the
   ball just before (after violations and out-of-bounds the official hands it to the inbounder).
@@ -50,15 +52,14 @@ Status (Nov 11, possession_eval.py). Hudl in brackets.
   Mitty now   11/5        24/21         15/11         7/7         2/6         33 of 36
   Riordan bef. 7/11 (8/10) 28/31 (29/26) 22/18 (21/8) 13/12 (5/12) 3/8 (2/6)  18 of 25
   Riordan now 10/9        30/28         18/9          5/9         4/8         21 of 25
-The pixel vote was built from Riordan's errors and checked untouched on Mitty, which barely
-moved (TO error 3 to 5, steal error 4 to 1, rebounds 17 to 19). SWITCH_COST and VOTE_SURE tuned
+These historical totals are development diagnostics, not event-level or individual accuracy.
+Both Mitty and Riordan are development data, not held-out validation. SWITCH_COST and VOTE_SURE tuned
 on Riordan (8, 0.5) leave Mitty near its own best (TO + steal error 6 against 5); tuned on Mitty
 (6, 0.3) they leave Riordan well off (12 against 7), so the Riordan values are kept.
 Turnovers are close in both games and the sampled ones look real. Steals depend on telling a
 live change from a dead ball, which still misses some referee hand-offs and timeouts.
-Rebounds are close on Riordan; on Mitty every live miss gets a rebound but Hudl credits only
-about 24 of 29 Opponent misses, and the sampled Valley defensive rebounds look real. Assists
-are not good enough: the two Hudl games disagree on how often a make is assisted (16 of 35 vs
+Rebound review and current limitations are in ml/docs/rebound_accuracy.md; matching Hudl totals
+cannot validate individual events. Assists are not good enough: the two Hudl games disagree on how often a make is assisted (16 of 35 vs
 8 of 34) and the sheets show drives counted as passes. Player numbers are found on about half
 the events and can't be checked against Hudl yet (its rows mostly lack numbers).
 """
@@ -488,6 +489,11 @@ def read_holder_colors(doc, runs, video):
 
     cap = cv2.VideoCapture(str(video))
     vfps = cap.get(cv2.CAP_PROP_FPS)
+    if not cap.isOpened() or not vfps or vfps <= 0:
+        raise RuntimeError(f"can't read the film {video}")
+    # The boxes are in the tracks' frame size; a smaller copy of the film (the site's 720p
+    # playback copy) is scaled up to it so the crops land in the same place.
+    size = tuple(doc["frame_size"])
     by_k = {}
     for r in runs:
         by_k.setdefault(r["k"], []).append(r)
@@ -508,6 +514,8 @@ def read_holder_colors(doc, runs, video):
             vi += 1
         ok, img = cap.read()
         vi += 1
+        if ok and (img.shape[1], img.shape[0]) != size:
+            img = cv2.resize(img, size, interpolation=cv2.INTER_LINEAR)
         while wi < len(want) and want[wi][0] < vi:
             group = by_k[want[wi][1]]
             wi += 1
@@ -709,41 +717,128 @@ def team_at_time(timeline, t):
     return None
 
 
+def rebound_hold_team(run):
+    """Use the current jersey sample, not a track's potentially switched identity."""
+    vote = run.get("vote")
+    if vote is not None:
+        if abs(vote) < VOTE_MIN:
+            return None, False
+        local_team = "Valley" if vote > 0 else "Opponent"
+        if abs(vote) < VOTE_SURE and run.get("team") not in (None, local_team):
+            return None, False
+        return local_team, abs(vote) >= VOTE_SURE
+    return run.get("team"), bool(run.get("sure"))
+
+
+def rebound_ref_handled(doc, start, end):
+    """Require sustained exclusive referee contact, not a player crossing a baseline official."""
+    consecutive = 0
+    for time, boxes in doc["frames"][max(0, int(start * doc["fps"])):int(end * doc["fps"]) + 1]:
+        if not start <= time <= end:
+            continue
+        held = False
+        for ball in (box for box in boxes if box[0] == 0 and box[5] >= 0.3):
+            ball_x, ball_y = (ball[1] + ball[3]) / 2, (ball[2] + ball[4]) / 2
+            near_player = any(player[1] <= ball_x <= player[3] and player[2] <= ball_y <= player[4]
+                              for player in players(boxes))
+            if near_player:
+                continue
+            held = held or any(ref[0] == 2 and ref[5] >= 0.4
+                               and ref[1] <= ball_x <= ref[3]
+                               and ref[2] + 0.2 * (ref[4] - ref[2]) <= ball_y <= ref[2] + 0.75 * (ref[4] - ref[2])
+                               for ref in boxes)
+        consecutive = consecutive + 1 if held else 0
+        if consecutive / doc["fps"] >= 0.5:
+            return True
+    return False
+
+
+def rebound_decisions_v2(doc, split, window, half_break, runs):
+    """One auditable decision per live miss; no-control guesses remain explicitly inferred."""
+    shots = live_shots([dict(shot) for shot in split["shots"]])
+    ordered = sorted(runs, key=lambda run: run["t0"])
+    decisions = []
+    for index, shot in enumerate(shots):
+        if not shot["live_miss"]:
+            continue
+        start = shot["t"] + 0.3
+        nxt = shots[index + 1] if index + 1 < len(shots) else None
+        end = min(shot["t"] + REB_LOOK, window[1], nxt["t"] if nxt else window[1])
+        if half_break and shot["t"] < half_break[0]:
+            end = min(end, half_break[0])
+        decision = {"shot_t": shot["t"], "search_end": end, "event": None}
+        decisions.append(decision)
+        candidates = [run for run in ordered if start <= run["t0"] < end]
+        first = candidates[0] if candidates else None
+        barrier = first["t0"] if first else end
+        if end <= start:
+            decision["reason"] = "boundary"
+            continue
+        if (first and first.get("ref")) or rebound_ref_handled(doc, start, barrier):
+            decision["reason"] = "dead_ball_before_control"
+            continue
+        control = next((run for run in candidates if not run.get("ref")
+                        and min(run["t1"], end) - run["t0"] + 1 / doc["fps"] >= 0.5 - 1e-6
+                        and run.get("contested", 0.0) < CONTESTED_MIN), None)
+        ref = next((run for run in candidates if run.get("ref")), None)
+        if control and ref and ref["t0"] <= control["t0"]:
+            control = None
+        team, sure = rebound_hold_team(control) if control else (None, False)
+        earlier = [run for run in candidates if control and run["t0"] < control["t0"]]
+        ambiguous = any(rebound_hold_team(run)[0] != team for run in earlier)
+        again = (nxt is not None and nxt["kind"] == "FG" and nxt["team"] == shot["team"]
+                 and nxt["basket"] == shot["basket"] and nxt["t"] <= end)
+        if team:
+            how = "control" if sure and not ambiguous else "inferred_control"
+            event = {"team": team, "t": control["t0"], "how": how,
+                     "evidence": "observed_control" if how == "control" else "uncertain_control"}
+            if how == "control" and not earlier:
+                event["track"] = control["tid"]
+        elif control:
+            track_team = control.get("team")
+            later = [run for run in candidates if run["t0"] > control["t0"]]
+            corroborated = track_team in ("Valley", "Opponent") and any(
+                run.get("vote") is not None and rebound_hold_team(run) == (track_team, True)
+                and run.get("contested", 0.0) < CONTESTED_MIN for run in later)
+            contradicted = any(run.get("ref") or rebound_hold_team(run)[0] not in (None, track_team)
+                               for run in later)
+            if corroborated and not contradicted:
+                event = {"team": track_team, "t": control["t0"], "how": "inferred_control",
+                         "evidence": "corroborated_track_team"}
+            else:
+                event = {"team": other(shot["team"]), "t": shot["t"], "how": "unresolved",
+                         "evidence": "control_team_unknown"}
+        elif again and not ref and not rebound_ref_handled(doc, start, end) and not any(
+                rebound_hold_team(run)[0] == other(shot["team"]) for run in candidates):
+            event = {"team": shot["team"], "t": shot["t"], "how": "repeat_shot",
+                     "evidence": "inferred_repeat_shot"}
+        elif first and not ref:
+            touch_team, _ = rebound_hold_team(first)
+            event = {"team": touch_team or other(shot["team"]), "t": first["t0"], "how": "touch",
+                     "evidence": "possible_tip_or_loose_ball"}
+        else:
+            event = {"team": other(shot["team"]), "t": shot["t"], "how": "unresolved",
+                     "evidence": "dead_ball_after_possible_touch" if ref else "no_control_seen"}
+        event.update(type="oreb" if event["team"] == shot["team"] else "dreb", shot_t=shot["t"])
+        event["event_conf"] = EVENT_CONF[(event["type"], event["how"])]
+        event["confidence"] = event["event_conf"]
+        decision.update(event=event, reason=event["evidence"])
+    return decisions
+
+
+def rebound_events_v2(doc, split, window, half_break, runs):
+    return [decision["event"] for decision in rebound_decisions_v2(doc, split, window, half_break, runs)
+            if decision["event"] is not None]
+
+
 def possession_events_v2(doc, split, window, half_break, runs, timeline):
-    """Rebounds from the first player to get the ball after each live miss; turnovers and
+    """Evidence-aware rebounds after each live miss; turnovers and
     steals from possession changes nothing else explains; all timed at the real moment."""
     shots = live_shots(split["shots"])
     visits = rim_visits(doc)
     holds = sorted((r for r in runs if r.get("team") or r.get("ref")), key=lambda r: r["t0"])
     events = []
-    # Rebounds.
-    for i, s in enumerate(shots):
-        if not s["live_miss"]:
-            continue
-        nxt = shots[i + 1] if i + 1 < len(shots) else None
-        # Only holds whose team is clear count here: one wrong color decides a rebound alone.
-        first = next((r for r in holds if s["t"] + 0.3 <= r["t0"] <= s["t"] + REB_LOOK
-                      and (r.get("ref") or r.get("sure"))), None)
-        again = (nxt is not None and nxt["team"] == s["team"] and nxt["basket"] == s["basket"]
-                 and nxt["t"] - s["t"] <= REB_LOOK)
-        if again and not any(r.get("sure") and r.get("team") == other(s["team"]) and s["t"] + 0.3 <= r["t0"] < nxt["t"]
-                             for r in holds):
-            # The same team shot again at the same basket and the other team never clearly had
-            # the ball: an offensive rebound (putbacks are often too quick to count as a hold).
-            events.append({"type": "oreb", "team": s["team"], "t": s["t"], "shot_t": s["t"], "how": "again"})
-            continue
-        if first is not None and first.get("ref"):
-            continue  # an official has it first: the ball went out of bounds (a team rebound)
-        if first is not None:
-            team = first["team"]
-            t = first["t0"]
-        else:
-            team, t = other(s["team"]), s["t"]  # nobody seen: the defense usually ends up with it
-        e = {"type": "oreb" if team == s["team"] else "dreb", "team": team, "t": t, "shot_t": s["t"],
-             "how": "hold" if first is not None else "default"}
-        if first is not None:
-            e["track"] = first["tid"]
-        events.append(e)
+    events.extend(rebound_events_v2(doc, split, window, half_break, runs))
     rebs = {round(e["shot_t"], 1): e for e in events}
     # Turnovers: a change of possession with no make, defensive rebound or dead-ball reason.
     for prev_run, run in zip(timeline, timeline[1:]):
@@ -832,6 +927,9 @@ def assists_v2(split, runs):
 # surest; a rebound given to the defense because nobody was seen is a guess; assists are weak.
 EVENT_CONF = {("oreb", "again"): 0.8, ("oreb", "hold"): 0.75, ("dreb", "hold"): 0.8, ("dreb", "default"): 0.5,
               ("oreb", "default"): 0.5, ("to", None): 0.6, ("stl", None): 0.5, ("ast", None): 0.4}
+EVENT_CONF.update({(kind, how): confidence for kind in ("oreb", "dreb")
+                   for how, confidence in (("control", 0.75), ("inferred_control", 0.45),
+                                           ("touch", 0.3), ("unresolved", 0.25), ("repeat_shot", 0.5))})
 
 
 def attribute_players(tracks, events, groups):
@@ -970,23 +1068,36 @@ def analyze(tracks, game_id, video=None, method="v2"):
             if video:
                 read_holder_colors(doc, hruns, video)
                 cache.write_text(json.dumps({"window": window, "pixels": True, "runs": hruns}))
-        refs = {groups[i]: c for i, c in enumerate(doc["group_centers_lab"])}
-        pixel_votes(hruns, refs)
-        track_team = label_holders(doc, hruns, groups)
-        for r in hruns:
-            r["contested"] = contested_share(doc, r)
-        timeline = possession_timeline(doc, hruns, side_per_frame(doc), info, window, half_break)
-        timeline = merge_blips(timeline, live_shots(split["shots"]))
-        events = possession_events_v2(doc, split, window, half_break, hruns, timeline)
-        # Assists use shorter holds too (a catch-and-shoot lasts a few frames), each with its
-        # track's voted team.
-        quick = hold_runs(doc, *window, min_frames=2)
-        for r in quick:
-            r["team"] = track_team(r["tid"])
-        events += assists_v2(split, quick)
+        timeline, events = run_v2(doc, split, window, half_break, groups, hruns)
     events.sort(key=lambda e: e["t"])
     return {"doc": doc, "split": split, "window": window, "half_break": half_break, "timeline": timeline,
             "events": events, "runs": hruns, "groups": groups, "info": info}
+
+
+def run_v2(doc, split, window, half_break, groups, hruns):
+    """Version 2 from the hold runs on: team per hold, the timeline and the events (rebounds,
+    turnovers, steals, assists), sorted by time. `split` needs "shots" (shot_split.py's labeled
+    shots), "halftime" and "valley_basket_first_half"; `groups` names the tracker's two color
+    groups ({0: "Valley", 1: "Opponent"} or flipped); `hruns` is hold_runs() output, with
+    read_holder_colors() applied when the film was read. Shared by analyze() and the site's
+    event step (worker/possession_events.py), so both give the same totals on the same input."""
+    info = {"halftime": split["halftime"], "valley_basket_first_half": split["valley_basket_first_half"]}
+    refs = {groups[i]: c for i, c in enumerate(doc["group_centers_lab"])}
+    pixel_votes(hruns, refs)
+    track_team = label_holders(doc, hruns, groups)
+    for r in hruns:
+        r["contested"] = contested_share(doc, r)
+    timeline = possession_timeline(doc, hruns, side_per_frame(doc), info, window, half_break)
+    timeline = merge_blips(timeline, live_shots(split["shots"]))
+    events = possession_events_v2(doc, split, window, half_break, hruns, timeline)
+    # Assists use shorter holds too (a catch-and-shoot lasts a few frames), each with its
+    # track's voted team.
+    quick = hold_runs(doc, *window, min_frames=2)
+    for r in quick:
+        r["team"] = track_team(r["tid"])
+    events += assists_v2(split, quick)
+    events.sort(key=lambda e: e["t"])
+    return timeline, events
 
 
 def main():

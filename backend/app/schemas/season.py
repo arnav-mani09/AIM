@@ -20,11 +20,13 @@ class SeasonGame(BaseModel):
     game_scheduled_at: datetime | None = None
     shots: int  # shots that count (not deleted)
     reviewed: int  # shots a coach confirmed, fixed or deleted
+    has_plays: bool = False  # team rebounds and turnovers drafted for this film
     box_score: BoxScore
 
 
 class SeasonSummary(BaseModel):
     games: list[SeasonGame]  # newest film first
-    totals: BoxScore  # the games' box scores added up
+    totals: BoxScore  # the games' box scores added up (rebounds and turnovers over plays_games films)
+    plays_games: int = 0  # films with team rebounds and turnovers
     pending: int  # films still being processed, not counted yet
     shots: list[SeasonShot]  # every shot that counts, for the season shot chart

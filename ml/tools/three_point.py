@@ -63,6 +63,7 @@ REFINE = "mask"          # line in the shot's own frame: "ray" through the feet,
 DRIVE_GAP = 0.5          # seconds the ball stays with the shooter after the gather that make it a drive (0: off)
 USE_TEAM = True          # skip players in the other team's jersey group when looking for the shooter
 USE_RELEASE = True       # prefer the player holding the ball just before it flies (see release_holder)
+NEAR_RIM_X = 3.0         # rim widths: a ball seen this close to the rim, below it, before a shot with no shooter found means a close shot
 MARGIN_FT = 0.5          # feet within this many feet past the arc count as on the line: a 2
 BX, BY = RX, RY + int(FLOOR_BELOW * SC)
 _T = np.linspace(0, 2 * np.pi, 160, endpoint=False)
@@ -505,6 +506,18 @@ def team_groups(doc, shots):
     return {"Valley": 0, "Opponent": 1} if yes > no else {"Valley": 1, "Opponent": 0}
 
 
+def no_takeoff_points(doc, s):
+    """2 or 3 for a field goal with no shooter found. Walking back from the rim, the ball is either
+    seen low near the basket (rising out of someone's hands: a close shot, a 2) or it isn't: it came
+    down into the picture from above or from far to the side, a long high arc (a 3). Checked on the
+    score bug (Nov 12): all 3 made field goals with no takeoff were 3s."""
+    x0, y0, x1, _ = s["rim"]
+    w = max(1.0, x1 - x0)
+    path = ball_path(doc, s["t"])
+    close = [p for p in path if abs(p[1] - (x0 + x1) / 2) <= NEAR_RIM_X * w and p[2] > y0 + 0.5 * w]
+    return 2 if close else 3
+
+
 def classify(doc, shots, video, side_of=None, debug=None):
     """Label each field goal in shots (from shot_split) with points 2 or 3, margin and arc_source.
     Changes the shots in place and returns the arc found for each basket."""
@@ -523,7 +536,7 @@ def classify(doc, shots, video, side_of=None, debug=None):
         other = group_of.get("Opponent" if s.get("team") == "Valley" else "Valley") if USE_TEAM else None
         tk = find_takeoff(doc, s, other)
         if tk is None:
-            s["points"] = None
+            s.update(points=no_takeoff_points(doc, s), margin=None, arc_source="no takeoff")
             continue
         s.update(tk)
         img = read_at(cap, video, tk["take"])

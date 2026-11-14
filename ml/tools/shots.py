@@ -56,6 +56,9 @@ def game_rims(boxes, frame_h, line):
     return [b for b in rims if b[3] - b[1] >= 0.6 * widest]
 
 
+JUMP_PX = 400   # the game ball doesn't move this far (pixels, either way) between two frames 0.1 s apart
+
+
 def best_ball(boxes, prev=None):
     """The game ball: nearest the last seen ball when that was recent, else the surest one.
     A stray low-score "ball" elsewhere in the frame otherwise breaks the ball's path."""
@@ -64,7 +67,9 @@ def best_ball(boxes, prev=None):
         return None
     if prev is not None:
         px, py = prev
-        return min(balls, key=lambda b: abs((b[1] + b[3]) / 2 - px) + abs((b[2] + b[4]) / 2 - py) - 100 * b[5])
+        dist = lambda b: abs((b[1] + b[3]) / 2 - px) + abs((b[2] + b[4]) / 2 - py)  # noqa: E731
+        candidates = [ball for ball in balls if dist(ball) <= JUMP_PX]
+        return min(candidates, key=lambda ball: dist(ball) - 100 * ball[5]) if candidates else None
     return max(balls, key=lambda b: b[5])
 
 
@@ -77,7 +82,7 @@ STILL_PX, STILL_LOOK = 8.0, (3.0, 0.5)
 # The detector often loses the ball for a few frames in front of the backboard or above the top
 # of the picture. If a ball's last spot and its next spot are at most GAP_FILL seconds apart, its
 # path in between (fill_gap) is checked for the zone above the rim too.
-GAP_FILL = 0.85
+GAP_FILL = 1.0
 # A rim the detector misses for a frame or two is taken from the last frame that had one.
 RIM_HOLD = 0.3
 
@@ -156,6 +161,21 @@ def in_zone(bx, by, r):
     return x0 - 0.5 * w <= bx <= x1 + 0.5 * w and y0 - 3 * w <= by <= y0 + 0.2 * (y1 - y0)
 
 
+def rim_x(shot):
+    """Where the shot's rim is now in the picture (x of its center). The camera often pans hard
+    while the ball goes through the net (60 px a frame on Mitty), so it's followed frame to frame
+    instead of kept where it was when the shot started."""
+    return shot.get("_rim_x", (shot["rim"][0] + shot["rim"][2]) / 2)
+
+
+def follow_rim(shot, rims):
+    cx0 = rim_x(shot)
+    near = [r for r in rims if abs((r[1] + r[3]) / 2 - cx0) < 2 * (r[3] - r[1])]
+    if near:
+        r = min(near, key=lambda r: abs((r[1] + r[3]) / 2 - cx0))
+        shot["_rim_x"] = (r[1] + r[3]) / 2
+
+
 def find_shots(doc: dict) -> list[dict]:
     """Main pass: follow one game ball (best_ball) and open an attempt when it enters the zone
     above a game rim. Rescue pass (Rescue below): follow every moving ball separately, so an
@@ -177,15 +197,22 @@ def find_shots(doc: dict) -> list[dict]:
                 x0, y0, x1, y1 = r[1:5]
                 w = x1 - x0
                 if in_zone(bx, by, r):
+                    if open_shot and returning_above_rim(open_shot, (t, bx, by, x0, y0, x1, y1)):
+                        previous = decide(dict(open_shot), observed_until=t)
+                        if not previous["made"]:
+                            shots.append(previous)
+                            open_shot, last_in_zone = None, -999.0
                     if open_shot is None and t - last_in_zone >= SHOT_GAP:
                         open_shot = {"t": t, "rim": [round(v) for v in r[1:5]], "ball_score": ball[5],
                                      "rim_score": r[5], "path": []}
                     last_in_zone = t
                 near_rim = abs(bx - (x0 + x1) / 2) < 3 * w and by < y1 + 6 * (y1 - y0)
                 if (open_shot and not open_shot.get("rescued") and near_rim
-                        and abs((x0 + x1) / 2 - (open_shot["rim"][0] + open_shot["rim"][2]) / 2) < 2 * w):
+                        and abs((x0 + x1) / 2 - rim_x(open_shot)) < 2 * w):
                     open_shot["path"].append((t, bx, by, x0, y0, x1, y1))
                     break
+        if open_shot:
+            follow_rim(open_shot, rescue_rims)
         if found and open_shot is None and t - last_in_zone >= SHOT_GAP:
             start, r, (ct, cx, cy), score = found
             open_shot = {"t": round(start, 2), "rim": [round(v) for v in r[1:5]], "ball_score": score,
@@ -196,11 +223,71 @@ def find_shots(doc: dict) -> list[dict]:
             if p:
                 open_shot["path"].append(p)
         if open_shot and t - open_shot["t"] > MAKE_WINDOW:
-            shots.append(decide(open_shot))
+            shots.append(decide(open_shot, observed_until=t))
             open_shot = None
     if open_shot:
-        shots.append(decide(open_shot))
+        shots.append(decide(open_shot, observed_until=doc["frames"][-1][0]))
+    for s in shots:
+        if s["made"] and dead_ball_make(doc, s):
+            s["made"], s["dead_ball_make"] = False, True
     return shots
+
+
+# Dead-ball makes. After a real make in live play the other team inbounds and the game moves to
+# the other end, so the camera pans away from the basket within a few seconds (2 to 6 s on almost
+# every scored field goal at Mitty and Riordan). Shots after a whistle (a foul, a violation, the
+# shot clock) also go in, but then nobody runs: the camera stays on the basket and the players were
+# already moving slowly before the shot. Free throws are left alone (players stand still before
+# them, and the camera stays for the second one).
+LEAVE_WITHIN = 7.0        # seconds after the make for the camera to leave the basket
+DEAD_SLOW = (0.15, 0.5)   # players' movement before the shot (shot_split.motion) that reads as a dead ball
+
+
+def camera_leaves(doc, shot, t0, horizon):
+    """Seconds after t0 until the shot's rim leaves the picture at a side of the frame for a
+    full second (the camera following play to the other end), or None within `horizon`."""
+    fps, frame_w = doc["fps"], doc["frame_size"][0]
+    x0, _, x1, _ = shot["rim"]
+    cx, w, gone = (x0 + x1) / 2, x1 - x0, None
+    start = int(round(t0 * fps))
+    for t, boxes in doc["frames"][start:start + int(horizon * fps) + int(fps) + 1]:
+        rims = [b for b in boxes if b[0] == 3 and b[5] >= 0.4 and abs((b[1] + b[3]) / 2 - cx) < 2.5 * w]
+        if rims:
+            r = min(rims, key=lambda b: abs((b[1] + b[3]) / 2 - cx))
+            cx, w, gone = (r[1] + r[3]) / 2, r[3] - r[1], None
+            continue
+        gone = t if gone is None else gone
+        if t - gone >= 1.0 and not 0.25 * frame_w <= cx <= 0.75 * frame_w:
+            return gone - t0 if gone - t0 <= horizon else None
+    return None
+
+
+def dead_ball_make(doc, shot) -> bool:
+    """Heuristic dead-ball candidate, only with a complete post-make observation window.
+    Slow players and a camera that stays put are not conclusive: timeouts and and-ones can
+    have the same pattern. Missing observations must not be treated as a stationary camera.
+    """
+    from shot_split import motion   # shared with the free throw rule
+
+    make_t = shot.get("make_t", shot["t"])
+    frames, fps = doc["frames"], doc["fps"]
+    start = int(round(make_t * fps))
+    stop = start + int((LEAVE_WITHIN + 1.0) * fps) + 1
+    observed = frames[max(0, start):stop]
+    if (not observed or observed[0][0] > make_t + 1.0 / fps
+            or observed[-1][0] < make_t + LEAVE_WITHIN + 1.0
+            or any(after[0] - before[0] > 1.5 / fps for before, after in zip(observed, observed[1:]))):
+        return False
+    rim_center = (shot["rim"][0] + shot["rim"][2]) / 2
+    rim_width = shot["rim"][2] - shot["rim"][0]
+    if not any(box[0] == 3 and box[5] >= MIN_RIM
+               and abs((box[1] + box[3]) / 2 - rim_center) < 2 * rim_width
+               for _, boxes in observed for box in boxes):
+        return False
+    m = motion(doc, shot["t"] - 4.0, shot["t"] - 0.5)
+    if m is None or not DEAD_SLOW[0] <= m < DEAD_SLOW[1]:
+        return False
+    return camera_leaves(doc, shot, make_t, LEAVE_WITHIN) is None
 
 
 class Rescue:
@@ -265,7 +352,7 @@ class Rescue:
 
     def near(self, shot, rims, t):
         """This frame's moving ball nearest the shot's rim (for the make rule), as a path point."""
-        cx0 = (shot["rim"][0] + shot["rim"][2]) / 2
+        cx0 = rim_x(shot)
         best = None
         for r in rims:
             x0, y0, x1, y1 = r[1:5]
@@ -287,8 +374,10 @@ class Rescue:
 # The net hangs to about y = 1.5, so y >= UNDER_NET means the ball has come out of the bottom.
 UNDER_NET = 1.6
 NET_EXIT_X = 0.35   # a make leaves the net near its center; a ball rolling off the side is wider
-OVER_RIM_X = 0.8    # the last point above the rim must be roughly over it
+OVER_RIM_X = 1.0    # the last point above the rim must be roughly over it
 SIDE_X = 0.6        # on the way down it must stay inside the rim's width
+EXIT_DRIFT = 0.6   # sideways move (rim widths) in the 0.3 s after leaving the net that rules out a make
+LOST_GAP, LOST_X = 0.3, 0.6   # see "Lost in the net" in decide()
 DROP_TIME = 1.5     # a ball can roll around the rim for over a second before dropping in
 
 
@@ -297,7 +386,21 @@ def rim_units(p):
     return t, (bx - (x0 + x1) / 2) / (x1 - x0), (by - y0) / max(1.0, y1 - y0)
 
 
-def decide(shot: dict) -> dict:
+def returning_above_rim(shot, point):
+    """A new upward flight after a below-net miss can be a quick putback, not the old shot."""
+    path = shot["path"]
+    if not path:
+        return False
+    if abs((point[3] + point[5]) / 2 - rim_x(shot)) >= 2 * (point[5] - point[3]):
+        return False
+    time, horizontal, vertical = rim_units(point)
+    previous_time, _, previous_vertical = rim_units(path[-1])
+    return (0 < time - previous_time <= 0.3 and abs(horizontal) <= SIDE_X
+            and vertical < 0.3 <= previous_vertical
+            and any(rim_units(sample)[2] >= UNDER_NET for sample in path))
+
+
+def decide(shot: dict, observed_until=None) -> dict:
     """Make = the ball comes out under the net near its center, having dropped there from
     above the rim without leaving the rim's width, and doesn't pop back up right after.
     Checked by hand on the Mitty game (Nov 10): a rim-out or a ball rolling off the front
@@ -310,7 +413,10 @@ def decide(shot: dict) -> dict:
     sideways direction. Balls that roll on the rim take longer, and a ball swinging in the
     net changes direction, so it called about half the real makes misses."""
     path = shot.pop("path")
+    shot.pop("_rim_x", None)
     pts = [rim_units(p) for p in path]
+    if observed_until is None:
+        observed_until = pts[-1][0] if pts else shot["t"]
     made, evidence, make_t = False, 0, None
     for k, (t, x, y) in enumerate(pts):
         if y < UNDER_NET:
@@ -322,10 +428,20 @@ def decide(shot: dict) -> dict:
             ta, xa = pts[a][0], pts[a][1]
             stays_inside = all(abs(pts[j][1]) <= SIDE_X for j in range(a + 1, k))
             pops_up = any(q[2] < 0.3 for q in pts[k + 1:] if q[0] - t <= 0.4)
+            # Out of the net a make falls nearly straight; a ball rolling off the rim keeps
+            # moving sideways (Mitty 6:09, Riordan 61:00).
+            drifts = any(abs(q[1] - x) > EXIT_DRIFT for q in pts[k + 1:] if q[0] - t <= 0.3)
             if (abs(xa) <= OVER_RIM_X and t - ta <= DROP_TIME and y <= 5.5 and stays_inside
-                    and abs(x) <= NET_EXIT_X and not pops_up):
+                    and abs(x) <= NET_EXIT_X and not pops_up and not drifts):
                 made, make_t = True, t
                 evidence = 1 + sum(1 for q in pts[k + 1:] if q[0] - t <= 0.4 and abs(q[1]) <= SIDE_X)
+            # Lost in the net: last seen over the rim near its center, hidden for a while (the
+            # net, often during a camera pan), then seen under the net a little to one side.
+            j = k - 1
+            if (not made and LOST_X and k > 0 and t - pts[j][0] >= LOST_GAP and t - pts[j][0] <= 1.0
+                    and -1.5 <= pts[j][2] <= 1.2 and abs(pts[j][1]) <= 0.5 and abs(x) <= LOST_X
+                    and y <= 5.5 and not pops_up and not drifts):
+                made, make_t, evidence = True, t, 1
         break
     if not made:
         for k, (t, x, y) in enumerate(pts):
@@ -334,8 +450,12 @@ def decide(shot: dict) -> dict:
             above = [j for j in range(k) if pts[j][2] < 0.3]
             if not above or abs(pts[above[-1]][1]) > OVER_RIM_X or t - pts[above[-1]][0] > 1.0:
                 continue
+            if not all(abs(point[1]) <= SIDE_X for point in pts[above[-1] + 1:k]):
+                continue
+            if any(point[2] < 0.3 for point in pts[k + 1:]):
+                continue
             nxt = pts[k + 1][0] if k + 1 < len(pts) else None
-            if nxt is None or nxt - t >= 0.5:
+            if (nxt if nxt is not None else observed_until) - t >= 0.5:
                 made, make_t, evidence = True, t, 0
                 break
     shot["made"] = made

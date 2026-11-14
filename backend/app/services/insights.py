@@ -14,8 +14,16 @@ Mirrors ml/tools/insights.py so the site and the offline tool agree:
   feet were within 8 ft of the baseline line through the rim, the rule three_point.zone_of uses.
 - The zone follows the coach's current call: a shot fixed from a 2 to a 3 moves to a 3-point zone.
 
-Only stats that hold up today are here (shots, makes, 2 vs 3, court zone). Possession stats
-(pace, points per possession, rebound and turnover rates) are listed as coming soon.
+Shooting stats hold up best (shots, makes, 2 vs 3, court zone). Team rebounds and turnovers
+come from possession tracking (worker/possession_events.py), close to Hudl on turnovers in both
+test games and on rebounds in one, so they and their rates are marked "fair" (QUALITY):
+- Possessions = FGA + 0.44 x FTA - OREB + TO (the usual estimate).
+- Turnover rate (TOV%) = TO / possessions.
+- Offensive rebound rate (OREB%) = OREB / (OREB + the other team's DREB), defensive (DREB%) =
+  DREB / (DREB + the other team's OREB): the share of available rebounds a team got.
+They count only films that have rebounds and turnovers drafted (play_games); films drafted
+before they existed give None until rerun. Pace and points per possession wait until the
+possession count is checked, and steals and assists until they are accurate (coming soon).
 """
 
 from __future__ import annotations
@@ -40,7 +48,10 @@ TEAM_SMALL_SAMPLE = 20  # fewer field goal tries than this: treat the numbers as
 ZONE_SMALL_SAMPLE = 5   # fewer tries than this in a zone: small sample
 ZONE_MENTION = 4        # a zone needs this many tries to be named in a scouting line
 
-COMING_SOON = ["Pace", "Points per possession", "Rebound rates", "Turnover rate"]
+COMING_SOON = ["Pace", "Points per possession", "Steals", "Assists", "Player names"]
+PLAY_STATS = ("oreb", "dreb", "reb", "to", "tov_pct", "oreb_pct", "dreb_pct")
+# How far to trust each stat group: shooting is "good", possession-based stats "fair".
+QUALITY = {**{k: "fair" for k in PLAY_STATS}}
 
 
 def _get(e, k):
@@ -192,7 +203,68 @@ def scouting_lines(r: dict, side: str) -> list[str]:
     return lines
 
 
-def build(shots, games: int) -> dict:
-    """Insights for both teams from a pile of shots (one or more games)."""
-    return {side: team_report(count_shots([s for s in shots if _get(s, "team") == side]), games, side)
-            for side in TEAMS}
+def count_plays(plays) -> Counter:
+    """Team rebounds and turnovers for one team (deleted ones skipped)."""
+    c = Counter()
+    for e in plays:
+        if _get(e, "status") == "deleted":
+            continue
+        kind = _get(e, "type")
+        if kind in ("oreb", "dreb", "to"):
+            c[kind] += 1
+    return c
+
+
+def play_report(mine: Counter, theirs: Counter, shots: Counter, play_games: int) -> dict:
+    """Rebound and turnover numbers for one team, over the films that have them. `shots` is that
+    team's shot counts over the same films (for the possession estimate)."""
+    if not play_games:
+        return {"play_games": 0, **dict.fromkeys(PLAY_STATS)}
+    oreb, dreb, to = mine["oreb"], mine["dreb"], mine["to"]
+    poss = shots["fga"] + 0.44 * shots["fta"] - oreb + to
+    return {
+        "play_games": play_games,
+        "oreb": oreb, "dreb": dreb, "reb": oreb + dreb, "to": to,
+        "tov_pct": pct(to, poss) if poss > 0 else None,
+        "oreb_pct": pct(oreb, oreb + theirs["dreb"]),
+        "dreb_pct": pct(dreb, dreb + theirs["oreb"]),
+    }
+
+
+def play_lines(r: dict, side: str) -> list[str]:
+    """Scouting lines for rebounds and turnovers, said as rough ("about"), since they're fair."""
+    if not r.get("play_games"):
+        return []
+    we = side == "valley"
+    subj, their = ("We", "our") if we else ("They", "their")
+    lines = []
+    if r["tov_pct"] is not None:
+        lines.append(f"{subj} turned it over {r['to']} times, about {_w(r['tov_pct'])}% of {their} possessions.")
+    if r["oreb_pct"] is not None and r["dreb_pct"] is not None:
+        lines.append(f"{subj} got about {_w(r['oreb_pct'])}% of {their} own misses back ({r['oreb']} offensive "
+                     f"rebounds) and {_w(r['dreb_pct'])}% of the other team's misses ({r['dreb']} defensive).")
+    if lines and r["play_games"] < r["games"]:
+        lines.append(f"Rebounds and turnovers are from {r['play_games']} of {r['games']} games; rerun the "
+                     "others to add them.")
+    return lines
+
+
+def build(shots, games: int, plays=(), play_shots=None, play_games: int = 0) -> dict:
+    """Insights for both teams from a pile of shots (one or more games). plays are the team
+    rebounds and turnovers from the play_games films that have them, and play_shots those
+    films' shots (all the shots when every film has plays)."""
+    play_shots = shots if play_shots is None else play_shots
+    out = {}
+    plays_by = {side: count_plays([e for e in plays if _get(e, "team") == side]) for side in TEAMS}
+    for side in TEAMS:
+        other = "opponent" if side == "valley" else "valley"
+        r = team_report(count_shots([s for s in shots if _get(s, "team") == side]), games, side)
+        r.update(play_report(plays_by[side], plays_by[other],
+                             count_shots([s for s in play_shots if _get(s, "team") == side]), play_games))
+        extra = play_lines(r, side)
+        if extra:
+            # After the shooting lines, before the small sample note.
+            at = len(r["lines"]) - (1 if r["small_sample"] and r["lines"][-1].startswith("Small sample") else 0)
+            r["lines"][at:at] = extra
+        out[side] = r
+    return out

@@ -2,7 +2,8 @@
 
 // The season from the coach's own films: each game's final score and team box score, the season
 // totals and a season shot chart. Every number comes from AIM's drafted shots plus the coach's
-// fixes. Stats AIM can't read from film yet are listed as coming soon, never filled with made-up numbers.
+// fixes. Team rebounds and turnovers count only films that have them. Stats AIM can't read from film
+// yet are listed as coming soon, never filled with made-up numbers.
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -18,7 +19,9 @@ const TEAMS: Array<[TeamSide, string]> = [
   ["opponent", "Opponent"],
 ];
 
-const COMING_SOON = ["Rebounds", "Assists", "Turnovers", "Steals", "Player names"];
+const COMING_SOON = ["Assists", "Steals", "Player names"];
+
+const num = (x: number | null | undefined) => (x === null || x === undefined ? "-" : `${x}`);
 
 export function SeasonView({ token, teamId }: { token: string; teamId: number }) {
   const router = useRouter();
@@ -103,13 +106,18 @@ export function SeasonView({ token, teamId }: { token: string; teamId: number })
 
 function SeasonTotals({ season }: { season: SeasonSummary }) {
   const games = season.games.length;
+  const playGames = season.plays_games ?? 0;
+  const perPlayGame = (x: number | null | undefined) =>
+    x === null || x === undefined || playGames === 0 ? "-" : (x / playGames).toFixed(1);
   return (
     <section className="section-card overflow-x-auto">
       <h2 className="text-xl font-semibold text-ink">Season totals</h2>
       <p className="text-sm text-subtext">
-        {games} {games === 1 ? "game" : "games"} with film. Deleted shots don&apos;t count.
+        {games} {games === 1 ? "game" : "games"} with film. Deleted shots don&apos;t count. Rebounds and turnovers are
+        team totals per game, rougher than the shooting
+        {playGames < games ? `, from ${playGames} of ${games} games (review the others to add them)` : ""}.
       </p>
-      <table className="mt-4 w-full min-w-[36rem] text-left text-sm">
+      <table className="mt-4 w-full min-w-[48rem] text-left text-sm">
         <thead className="text-xs uppercase tracking-[0.14em] text-subtext">
           <tr>
             <th className="py-2">Team</th>
@@ -121,6 +129,10 @@ function SeasonTotals({ season }: { season: SeasonSummary }) {
             <th>3PT%</th>
             <th>FT</th>
             <th>FT%</th>
+            <th>REB/g</th>
+            <th>OREB/g</th>
+            <th>DREB/g</th>
+            <th>TO/g</th>
           </tr>
         </thead>
         <tbody>
@@ -143,6 +155,10 @@ function SeasonTotals({ season }: { season: SeasonSummary }) {
                   {line.ftm}/{line.fta}
                 </td>
                 <td>{pct(line.ftm, line.fta)}</td>
+                <td>{perPlayGame(line.reb)}</td>
+                <td>{perPlayGame(line.oreb)}</td>
+                <td>{perPlayGame(line.dreb)}</td>
+                <td>{perPlayGame(line.to)}</td>
               </tr>
             );
           })}
@@ -189,7 +205,7 @@ function GameRow({ game, reviewHref }: { game: SeasonGame; reviewHref: string })
         <div className="mt-4 overflow-x-auto">
           <BoxTable valley={valley} opponent={opponent} />
           <Link href={reviewHref} className="mt-3 inline-block text-xs font-semibold text-accent hover:underline">
-            Review shots and watch film
+            Review shots, rebounds and turnovers
           </Link>
         </div>
       </details>
@@ -203,13 +219,17 @@ function BoxTable({ valley, opponent }: { valley: TeamLine; opponent: TeamLine }
     ["Opponent", opponent],
   ];
   return (
-    <table className="w-full min-w-[30rem] text-left text-sm">
+    <table className="w-full min-w-[40rem] text-left text-sm">
       <thead className="text-xs uppercase tracking-[0.14em] text-subtext">
         <tr>
           <th className="py-1">Team</th>
           <th>FG</th>
           <th>3PT</th>
           <th>FT</th>
+          <th>OREB</th>
+          <th>DREB</th>
+          <th>REB</th>
+          <th>TO</th>
           <th>Points</th>
         </tr>
       </thead>
@@ -226,6 +246,10 @@ function BoxTable({ valley, opponent }: { valley: TeamLine; opponent: TeamLine }
             <td>
               {line.ftm}/{line.fta} ({pct(line.ftm, line.fta)})
             </td>
+            <td>{num(line.oreb)}</td>
+            <td>{num(line.dreb)}</td>
+            <td>{num(line.reb)}</td>
+            <td>{num(line.to)}</td>
             <td className="font-bold">{line.pts}</td>
           </tr>
         ))}

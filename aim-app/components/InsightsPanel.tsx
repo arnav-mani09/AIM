@@ -8,9 +8,9 @@ import { useId } from "react";
 
 import type { InsightZone, TeamInsights, ZoneRow } from "@/lib/insightsApi";
 
-const fmtPct = (x: number | null) => (x === null ? "-" : `${Math.round(x)}%`);
+const fmtPct = (x: number | null | undefined) => (x == null ? "-" : `${Math.round(x)}%`);
 
-export const COMING_SOON_NOTE = "Need possession tracking first, so not shown yet.";
+export const COMING_SOON_NOTE = "AIM can't read these well enough from film yet, so not shown.";
 
 export function InfoTip({ label, text }: { label: string; text: string }) {
   const id = useId();
@@ -39,15 +39,18 @@ const TIPS = {
   efg: "Effective FG%: like FG%, but a made 3 counts as one and a half makes, because it's worth 1.5 times a 2. It shows how well a team shoots once 3s get their extra credit.",
   ts: "True shooting %: points per shot, with free throws counted in. It's on the same scale as FG%, so a higher number means more points from the same number of shots.",
   ftRate: "How many free throws a team shoots for every 10 field goal tries. Higher means they get fouled a lot.",
+  tov: "Turnover rate: turnovers out of every 100 possessions. Lower is better. Fair: AIM drafts turnovers from who has the ball, so treat it as close, not exact.",
+  oreb: "Offensive rebound rate: the share of the team's own misses it got back. Fair: drafted from film, close but not exact.",
+  dreb: "Defensive rebound rate: the share of the other team's misses this team grabbed. Fair: drafted from film, close but not exact.",
 };
 
-type Tile = { label: string; value: string; detail?: string; tip?: string };
+type Tile = { label: string; value: string; detail?: string; tip?: string; fair?: boolean };
 
 export function StatTiles({ team, compact = false }: { team: TeamInsights; compact?: boolean }) {
   const tiles: Tile[] = [
     {
       label: team.games > 1 ? "Points a game" : "Points",
-      value: team.games > 1 ? `${team.pts_per_game ?? 0}` : `${team.pts}`,
+      value: team.games > 1 ? `${team.pts_per_game ?? "-"}` : `${team.pts}`,
       detail: team.games > 1 ? `${team.pts} in ${team.games} games` : undefined,
     },
     { label: "FG%", value: fmtPct(team.fg_pct), detail: `${team.fgm} of ${team.fga}` },
@@ -62,6 +65,15 @@ export function StatTiles({ team, compact = false }: { team: TeamInsights; compa
       tip: TIPS.ftRate,
     },
   ];
+  if (team.play_games) {
+    const games = team.play_games < team.games ? ` (${team.play_games} of ${team.games} games)` : "";
+    tiles.push(
+      { label: "Turnover rate", value: fmtPct(team.tov_pct), detail: `${team.to ?? "-"} turnovers${games}`, tip: TIPS.tov, fair: true },
+      { label: "Off. rebound rate", value: fmtPct(team.oreb_pct), detail: `${team.oreb ?? "-"} off. rebounds${games}`, tip: TIPS.oreb, fair: true },
+      { label: "Def. rebound rate", value: fmtPct(team.dreb_pct), detail: `${team.dreb ?? "-"} def. rebounds${games}`, tip: TIPS.dreb, fair: true },
+      { label: "Rebounds", value: `${team.reb ?? "-"}`, detail: games ? games.trim() : undefined, fair: true },
+    );
+  }
   return (
     <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       {tiles.map((t) => (
@@ -69,6 +81,9 @@ export function StatTiles({ team, compact = false }: { team: TeamInsights; compa
           <dt className="text-xs text-subtext">
             {t.label}
             {t.tip && <InfoTip label={t.label} text={t.tip} />}
+            {t.fair && (
+              <span className="ml-1 rounded-full bg-yellow-50 px-1.5 text-[0.65rem] font-semibold text-yellow-800">fair</span>
+            )}
           </dt>
           <dd className={`${compact ? "text-lg" : "text-2xl"} font-semibold text-ink`}>{t.value}</dd>
           {t.detail && <dd className="text-xs text-subtext">{t.detail}</dd>}
@@ -260,7 +275,7 @@ export function TeamInsightsCard({
   name: string;
   comingSoon: string[];
 }) {
-  if (!team.fga && !team.fta) {
+  if (!team.fga && !team.fta && !team.play_games) {
     return <p className="text-sm text-subtext">No shots counted for {name} in these games.</p>;
   }
   return (

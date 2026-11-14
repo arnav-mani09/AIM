@@ -1,6 +1,6 @@
-// Team shooting insights (GET /api/v1/teams/{team}/insights?upload_ids=...): advanced shooting
-// stats, a zone table and plain-language scouting lines for Valley and the Opponent. Same formulas
-// and zone names as ml/tools/insights.py.
+// Team insights (GET /api/v1/teams/{team}/insights?upload_ids=...): advanced shooting stats, a
+// zone table, team rebound and turnover rates and plain-language scouting lines for Valley and the
+// Opponent. Same shooting formulas and zone names as ml/tools/insights.py.
 
 import type { TeamSide } from "./reviewApi";
 
@@ -40,6 +40,17 @@ export type TeamInsights = {
   /** Share of field goal tries that are 3s (0 to 1). */
   fg3a_rate: number | null;
   small_sample: boolean;
+  /** Films with team rebounds and turnovers; the fields below are null when 0. */
+  play_games?: number;
+  oreb?: number | null;
+  dreb?: number | null;
+  reb?: number | null;
+  to?: number | null;
+  /** Turnovers per 100 possessions (FGA + 0.44 x FTA - OREB + TO). */
+  tov_pct?: number | null;
+  /** Share of available offensive / defensive rebounds the team got. */
+  oreb_pct?: number | null;
+  dreb_pct?: number | null;
   zones: ZoneRow[];
   lines: string[];
 };
@@ -58,6 +69,8 @@ export type Insights = {
   skipped: number;
   teams: Record<TeamSide, TeamInsights>;
   coming_soon: string[];
+  /** Stat name to "fair" for numbers to read as rough (rebounds and turnovers). */
+  quality?: Record<string, string>;
 };
 
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "http://127.0.0.1:8000";
