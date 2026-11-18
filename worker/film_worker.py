@@ -25,6 +25,35 @@ image = (
     .pip_install("boto3==1.40.76", "sentry-sdk==2.71.0")
 )
 
+import_image = image.add_local_file(
+    Path(__file__).resolve().parents[1] / "backend/app/services/film_import_download.py",
+    "/root/film_import_download.py",
+)
+
+
+@app.function(
+    image=import_image,
+    secrets=[modal.Secret.from_name("aim-r2")],
+    cpu=2.0,
+    memory=1024,
+    timeout=2 * 60 * 60 + 5 * 60,
+    retries=0,
+)
+def import_film(source_key: str) -> dict:
+    from film_import_download import ImportRejected, import_to_r2
+
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            return import_to_r2(
+                os.environ["FILM_IMPORT_SOURCE_URL"], os.environ["FILM_IMPORT_ALLOWED_HOSTS"],
+                _r2(), os.environ["R2_BUCKET"], source_key, Path(directory) / "source",
+                lambda path: _probe(path, restricted=True),
+            )
+    except ImportRejected:
+        return {"error": "The source is not an authorized, supported direct video download."}
+    except Exception:
+        return {"error": "Film import failed. Obtain a new authorized direct download or upload a file."}
+
 PROXY_HEIGHT = 720
 # Keyframe every 2 s at 30 fps so seeking in the player lands quickly.
 KEYFRAME_INTERVAL = 60
@@ -44,14 +73,15 @@ def _r2():
     )
 
 
-def _probe(path: Path) -> dict:
+def _probe(path: Path, restricted: bool = False) -> dict:
     result = subprocess.run(
         [
             "ffprobe", "-v", "error", "-print_format", "json",
+            *(["-protocol_whitelist", "file", "-format_whitelist", "mov"] if restricted else []),
             "-show_entries", "format=duration:stream=codec_type,width,height",
             str(path),
         ],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, check=True, timeout=120 if restricted else None,
     )
     info = json.loads(result.stdout)
     video = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), {})

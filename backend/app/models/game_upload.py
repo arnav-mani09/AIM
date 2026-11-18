@@ -17,6 +17,8 @@ class GameUpload(Base):
     # Expected size and the R2 multipart upload id, set while status == "uploading".
     size_bytes = Column(BigInteger, nullable=True)
     storage_upload_id = Column(String, nullable=True)
+    import_job_id = Column(String, nullable=True)
+    import_started_at = Column(DateTime, nullable=True)
     # 720p playback copy and thumbnail made by the Modal worker, plus its job.
     proxy_url = Column(String, nullable=True)
     thumbnail_url = Column(String, nullable=True)

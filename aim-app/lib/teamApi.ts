@@ -100,9 +100,31 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
   });
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}));
-    throw new Error(detail.detail ?? detail.message ?? "Request failed");
+    const message = typeof detail.detail === "string"
+      ? detail.detail
+      : Array.isArray(detail.detail)
+        ? detail.detail.map((item: { msg?: string }) => item.msg ?? "Invalid value").join(". ")
+        : detail.message;
+    throw new Error(message || "Request failed");
   }
   return response.json() as Promise<T>;
+}
+
+export function importGameFilm(
+  token: string,
+  teamId: number,
+  payload: {
+    title: string;
+    source_url: string;
+    notes?: string | null;
+    valley_jersey?: string | null;
+    opponent_jersey?: string | null;
+  },
+): Promise<GameUploadRecord> {
+  return request<GameUploadRecord>(`/api/v1/teams/${teamId}/film/import`, token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function fetchTeams(token: string): Promise<TeamMembership[]> {

@@ -366,15 +366,16 @@ export default function ReviewPage() {
   const backHref = teamParam ? `/dashboard/film/${uploadId}?team=${teamParam}` : "/dashboard";
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-6 py-10">
-      <Link href={backHref} className="text-sm text-subtext hover:text-ink">
+    <main className="dashboard-page">
+      <Link href={backHref} className="w-fit text-sm font-medium text-subtext hover:text-ink">
         ← Back to film
       </Link>
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
+          <p className="dashboard-eyebrow">Film analysis / Optional corrections</p>
           <h1 className="text-3xl font-semibold text-ink">Review shots</h1>
-          <p className="mt-1 text-sm text-subtext">
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-subtext">
             Stats and insights are available automatically when processing finishes; no full-game review or
             confirmation is required. These are estimates from film, not verified results. Optionally correct
             anything that looks wrong. The lowest model scores are at the top.
@@ -388,7 +389,7 @@ export default function ReviewPage() {
       </div>
 
       {actionError && (
-        <div className="flex items-start justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div role="alert" className="flex items-start justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           <p>{actionError}</p>
           <button onClick={() => setActionError(null)} className="font-semibold">
             Dismiss
@@ -463,8 +464,12 @@ export default function ReviewPage() {
             </section>
           )}
           <section className="section-card flex flex-col gap-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="font-semibold text-ink">Film playback</h2>
+              <p className="text-xs text-subtext">Select a shot to jump to the moment</p>
+            </div>
             {videoUrl ? (
-              <video ref={videoRef} controls src={videoUrl} className="w-full rounded-xl border border-stroke" />
+              <video ref={videoRef} controls src={videoUrl} className="max-h-[65vh] w-full rounded-xl border border-stroke" />
             ) : (
               <div className="flex aspect-video w-full items-center justify-center rounded-xl border border-stroke bg-accentMuted text-subtext">
                 {mockOnly ? "Video goes here (sample data has no film)" : "The video didn't load. Try refreshing."}
@@ -502,7 +507,7 @@ export default function ReviewPage() {
             <div className="section-card flex flex-col gap-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-xl font-semibold text-ink">Shots</h2>
-                <div className="flex gap-2 text-sm">
+                <div role="group" aria-label="Filter shots" className="dashboard-segment-control text-sm">
                   {(
                     [
                       ["all", "All"],
@@ -513,6 +518,7 @@ export default function ReviewPage() {
                     <button
                       key={value}
                       onClick={() => setFilter(value)}
+                      aria-pressed={filter === value}
                       className={`rounded-full px-4 py-2 font-semibold ${
                         filter === value ? "bg-accent text-white" : "border border-stroke text-ink"
                       }`}

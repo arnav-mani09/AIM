@@ -46,12 +46,12 @@ export function ScoutingView({ token, teamId }: { token: string; teamId: number 
     };
   }, [token, teamId, key]);
 
-  if (seasonError) return <p className="text-sm text-red-500">{seasonError}</p>;
-  if (!season) return <p className="text-sm text-subtext">Loading games…</p>;
+  if (seasonError) return <p role="alert" className="dashboard-empty text-red-700">{seasonError}</p>;
+  if (!season) return <p role="status" className="dashboard-empty text-subtext">Loading games…</p>;
 
   if (season.games.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-stroke p-6 text-sm">
+      <div className="dashboard-empty">
         <p className="font-semibold text-ink">No games yet</p>
         <p className="mt-1 text-subtext">
           Upload a game film and AIM will read every shot. Scouting reports build from there.
@@ -72,7 +72,7 @@ export function ScoutingView({ token, teamId }: { token: string; teamId: number 
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex gap-2 text-sm">
+      <div role="group" aria-label="Scouting report type" className="dashboard-segment-control text-sm">
         {(
           [
             ["opponent", "Scout an opponent"],
@@ -82,6 +82,7 @@ export function ScoutingView({ token, teamId }: { token: string; teamId: number 
           <button
             key={value}
             onClick={() => setView(value)}
+            aria-pressed={view === value}
             className={`rounded-full px-4 py-2 font-semibold ${
               view === value ? "bg-accent text-white" : "border border-stroke text-ink"
             }`}
@@ -94,7 +95,13 @@ export function ScoutingView({ token, teamId }: { token: string; teamId: number 
       {view === "opponent" ? (
         <>
           <section className="section-card">
-            <h2 className="text-xl font-semibold text-ink">Pick the games</h2>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="dashboard-eyebrow">Report sources</p>
+                <h2 className="text-xl font-semibold text-ink">Choose games to scout</h2>
+              </div>
+              <span className="pill" role="status">{picked.length} selected</span>
+            </div>
             <p className="text-sm text-subtext">
               Check every game you have against the team you&apos;re scouting. AIM adds up their shots from those
               games.
@@ -109,7 +116,7 @@ export function ScoutingView({ token, teamId }: { token: string; teamId: number 
                   >
                     <input
                       type="checkbox"
-                      className="mt-1 accent-[#1a4d84]"
+                      className="mt-1 h-4 w-4 shrink-0"
                       checked={picked.includes(g.upload_id)}
                       onChange={() => toggle(g.upload_id)}
                     />
@@ -126,15 +133,16 @@ export function ScoutingView({ token, teamId }: { token: string; teamId: number 
           </section>
 
           {!key ? (
-            <p className="rounded-2xl border border-dashed border-stroke p-6 text-sm text-subtext">
+            <p className="dashboard-empty text-subtext">
               Pick one or more games above to see the opponent&apos;s tendencies.
             </p>
           ) : scoutError ? (
-            <p className="text-sm text-red-500">{scoutError}</p>
+            <p role="alert" className="dashboard-empty text-red-700">{scoutError}</p>
           ) : !report ? (
-            <p className="text-sm text-subtext">Building the report…</p>
+            <p role="status" className="dashboard-empty text-subtext">Building the report…</p>
           ) : (
             <section className="section-card">
+              <p className="dashboard-eyebrow">Scouting report</p>
               <h2 className="text-xl font-semibold text-ink">Opponent tendencies</h2>
               <p className="mb-4 text-sm text-subtext">
                 From {report.games.length} {report.games.length === 1 ? "game" : "games"}.
@@ -147,6 +155,7 @@ export function ScoutingView({ token, teamId }: { token: string; teamId: number 
         </>
       ) : (
         <section className="section-card">
+          <p className="dashboard-eyebrow">Season perspective</p>
           <h2 className="text-xl font-semibold text-ink">Our team this season</h2>
           <p className="mb-4 text-sm text-subtext">
             Valley&apos;s shooting over all {season.games.length} {season.games.length === 1 ? "game" : "games"} with

@@ -15,6 +15,7 @@ import {
   fetchFilmPlaybackUrl,
 } from "@/lib/teamApi";
 import { formatLocalDateTime } from "@/lib/dateTime";
+import { filmStatusLabel } from "@/lib/filmIntake";
 
 type Params = {
   uploadId: string;
@@ -110,7 +111,7 @@ export default function FilmEditorPage() {
       });
   }, [token, teamId, upload?.status, uploadId]);
 
-  const playable = upload != null && upload.status !== "uploading";
+  const playable = upload != null && ["processing", "ready"].includes(upload.status);
   const hasProxy = upload?.has_proxy ?? false;
   useEffect(() => {
     if (!token || !teamId || !playable) {
@@ -253,18 +254,19 @@ export default function FilmEditorPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-6 px-6 py-10">
-      <Link href="/dashboard" className="text-sm text-subtext hover:text-ink">
-        ← Back to dashboard
+    <main className="dashboard-page">
+      <Link href={`/dashboard?tab=film&team=${teamId}`} className="w-fit text-sm font-medium text-subtext hover:text-ink">
+        ← Film library
       </Link>
       {loading ? (
-        <p>Loading film…</p>
+        <p role="status" className="dashboard-empty text-subtext">Loading film…</p>
       ) : error ? (
-        <p className="text-red-500">{error}</p>
+        <p role="alert" className="dashboard-empty text-red-700">{error}</p>
       ) : upload ? (
         <>
           <section className="section-card">
-            <h1 className="text-3xl font-semibold text-ink">{upload.title}</h1>
+            <p className="dashboard-eyebrow">Film workspace</p>
+            <h1 className="break-words text-3xl font-semibold text-ink">{upload.title}</h1>
             <p className="mt-1 text-sm text-subtext">
               Uploaded {formatLocalDateTime(upload.uploaded_at)}
               {durationMinutes && ` • ${durationMinutes} min`}
@@ -275,7 +277,7 @@ export default function FilmEditorPage() {
                 isReady ? "bg-green-100 text-green-700" : isError ? "bg-red-100 text-red-600" : "bg-yellow-100 text-yellow-700"
               }`}
             >
-              {isReady ? "Processing complete" : isError ? "Processing failed" : "Processing film…"}
+              {filmStatusLabel(statusLabel)}
             </span>
             {isError && upload?.processing_error && (
               <p className="mt-2 text-xs text-red-600">{upload.processing_error}</p>
@@ -283,22 +285,22 @@ export default function FilmEditorPage() {
             {isReady && (
               <Link
                 href={`/dashboard/film/${uploadId}/review?team=${teamId}`}
-                className="mt-4 flex w-fit rounded-2xl bg-accent px-5 py-3 text-lg font-semibold text-white"
+                className="mt-4 flex w-fit rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white"
               >
                 Review shots →
               </Link>
             )}
-            <p className="mt-4 text-sm text-subtext">
-              Once AIM finishes processing, suggested segments will show below. You can also create manual
-              segments now by entering start/end points (in seconds).
+            <p className="mt-4 max-w-3xl text-sm text-subtext">
+              Watch the film, preview suggested segments, or publish clips for your team. Manual segments are
+              available after processing finishes. Shot review is optional.
             </p>
             {videoUrl ? (
-              <div className="mt-6">
+              <div className="mt-6 overflow-hidden rounded-xl bg-ink">
                 <video
                   ref={videoRef}
                   controls
                   src={videoUrl}
-                  className="w-full rounded-xl border border-stroke"
+                  className="max-h-[65vh] w-full"
                   onLoadedMetadata={handleMetadataLoaded}
                 />
               </div>
@@ -308,9 +310,12 @@ export default function FilmEditorPage() {
           </section>
 
           <section className="section-card">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-ink">Suggested segments</h2>
-              <p className="text-xs uppercase tracking-[0.3em] text-subtext">Auto-generated</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="dashboard-eyebrow">Find the moments that matter</p>
+                <h2 className="text-xl font-semibold text-ink">Film segments</h2>
+              </div>
+              <span className="pill">{segments.length} segments</span>
             </div>
             {segments.length === 0 ? (
               <p className="mt-3 text-sm text-subtext">We&apos;ll suggest cuts as soon as processing finishes.</p>
@@ -355,15 +360,19 @@ export default function FilmEditorPage() {
 
           <section className="section-card grid gap-6 md:grid-cols-2">
             <form onSubmit={handleCreateSegment} className="flex flex-col gap-3 rounded-2xl border border-stroke p-4 text-sm">
-              <p className="text-xs uppercase tracking-[0.3em] text-subtext">Add segment</p>
+              <div>
+                <p className="dashboard-eyebrow">Create a clip</p>
+                <h2 className="font-semibold text-ink">Add segment</h2>
+              </div>
               {!isReady && (
                 <p className="text-xs text-subtext">
                   Segments will be editable after film processing finishes.
                 </p>
               )}
               <div className="flex flex-col gap-2">
-                <label className="text-xs uppercase tracking-[0.3em] text-subtext">Start</label>
+                <label htmlFor="segment-start" className="label-text">Start</label>
                 <input
+                  id="segment-start"
                   type="range"
                   min={0}
                   max={Math.max(duration, endValue)}
@@ -383,8 +392,9 @@ export default function FilmEditorPage() {
                 </div>
               </div>
               <div className="flex flex-col gap-2">
-                <label className="text-xs uppercase tracking-[0.3em] text-subtext">End</label>
+                <label htmlFor="segment-end" className="label-text">End</label>
                 <input
+                  id="segment-end"
                   type="range"
                   min={startValue + 1}
                   max={Math.max(duration, endValue)}
@@ -439,7 +449,8 @@ export default function FilmEditorPage() {
             </form>
 
             <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-subtext">Published clips</p>
+              <p className="dashboard-eyebrow">Ready for the team</p>
+              <h2 className="font-semibold text-ink">Published clips</h2>
               {clips.length === 0 ? (
                 <p className="mt-3 text-sm text-subtext">Publish a segment to send it to the team workspace.</p>
               ) : (

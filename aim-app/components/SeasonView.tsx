@@ -39,14 +39,14 @@ export function SeasonView({ token, teamId }: { token: string; teamId: number })
     };
   }, [token, teamId]);
 
-  if (error) return <p className="text-sm text-red-500">{error}</p>;
-  if (!season) return <p className="text-sm text-subtext">Loading season…</p>;
+  if (error) return <p role="alert" className="dashboard-empty text-red-700">{error}</p>;
+  if (!season) return <p role="status" className="dashboard-empty text-subtext">Loading season…</p>;
 
   const reviewHref = (uploadId: number) => `/dashboard/film/${uploadId}/review?team=${teamId}`;
 
   if (season.games.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-stroke p-6 text-sm">
+      <div className="dashboard-empty">
         {season.pending > 0 ? (
           <p className="text-ink">
             AIM is still reading {season.pending === 1 ? "your film" : `${season.pending} films`}. The season fills in
@@ -72,6 +72,18 @@ export function SeasonView({ token, teamId }: { token: string; teamId: number })
 
   return (
     <div className="flex flex-col gap-6">
+      <div className="grid gap-3 sm:grid-cols-3" aria-label="Season overview">
+        {[
+          ["Games with stats", season.games.length.toString()],
+          ["Valley points / game", (season.totals.valley.pts / season.games.length).toFixed(1)],
+          ["Valley field goal %", pct(season.totals.valley.fgm, season.totals.valley.fga)],
+        ].map(([label, value]) => (
+          <div key={label} className="dashboard-card">
+            <p className="dashboard-eyebrow">{label}</p>
+            <p className="text-3xl font-semibold tabular-nums tracking-tight text-ink">{value}</p>
+          </div>
+        ))}
+      </div>
       {season.pending > 0 && (
         <p className="rounded-xl bg-tint px-3 py-2 text-sm text-ink">
           {season.pending} more {season.pending === 1 ? "film is" : "films are"} still processing and not counted yet.
@@ -81,7 +93,8 @@ export function SeasonView({ token, teamId }: { token: string; teamId: number })
       <SeasonTotals season={season} />
 
       <section className="section-card">
-        <h2 className="text-xl font-semibold text-ink">Games</h2>
+        <p className="dashboard-eyebrow">Game by game</p>
+        <h2 className="text-xl font-semibold text-ink">Game results</h2>
         <p className="text-sm text-subtext">
           Scores come from the shots AIM found. Review a game to fix anything it got wrong.
         </p>
@@ -111,13 +124,14 @@ function SeasonTotals({ season }: { season: SeasonSummary }) {
     x === null || x === undefined || playGames === 0 ? "-" : (x / playGames).toFixed(1);
   return (
     <section className="section-card overflow-x-auto">
+      <p className="dashboard-eyebrow">Team comparison</p>
       <h2 className="text-xl font-semibold text-ink">Season totals</h2>
       <p className="text-sm text-subtext">
         {games} {games === 1 ? "game" : "games"} with film. Deleted shots don&apos;t count. Rebounds and turnovers are
         team totals per game, rougher than the shooting
         {playGames < games ? `, from ${playGames} of ${games} games (review the others to add them)` : ""}.
       </p>
-      <table className="mt-4 w-full min-w-[48rem] text-left text-sm">
+      <table aria-label="Season team totals" className="mt-4 w-full min-w-[48rem] text-left text-sm">
         <thead className="text-xs uppercase tracking-[0.14em] text-subtext">
           <tr>
             <th className="py-2">Team</th>
@@ -181,7 +195,7 @@ function GameRow({ game, reviewHref }: { game: SeasonGame; reviewHref: string })
   const fullyReviewed = game.shots > 0 && game.reviewed >= game.shots;
   return (
     <li className="rounded-2xl border border-stroke p-4">
-      <details>
+      <details className="dashboard-game">
         <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3">
           <span className="flex flex-col">
             <span className="font-semibold text-ink">{game.game_matchup ?? game.title}</span>
@@ -219,7 +233,7 @@ function BoxTable({ valley, opponent }: { valley: TeamLine; opponent: TeamLine }
     ["Opponent", opponent],
   ];
   return (
-    <table className="w-full min-w-[40rem] text-left text-sm">
+    <table aria-label="Game team box score" className="w-full min-w-[40rem] text-left text-sm">
       <thead className="text-xs uppercase tracking-[0.14em] text-subtext">
         <tr>
           <th className="py-1">Team</th>

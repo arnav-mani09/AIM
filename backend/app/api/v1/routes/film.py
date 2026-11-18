@@ -6,6 +6,8 @@ from uuid import uuid4
 import sentry_sdk
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -17,6 +19,7 @@ from app.models.film_segment import FilmSegment
 from app.models.clip import Clip
 from app.schemas.game_upload import (
     FilmUploadStart,
+    FilmImportStart,
     FilmUploadStarted,
     GameUploadRead,
     PlaybackUrl,
@@ -40,8 +43,31 @@ from app.services import storage
 from app.services.film_processing import FilmProcessingService
 from app.services.clip_stats import link_clip_to_possessions, hydrate_clip_stats
 from app.services.game_matching import find_game_for_upload
+from app.services.film_import import check_import_available, launch_import, refresh_import
 
-router = APIRouter(prefix="/teams/{team_id}/film", tags=["film"])
+
+class FilmRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def sanitized_handler(request):
+            if self.path.endswith("/import"):
+                with sentry_sdk.isolation_scope() as scope:
+                    scope.add_event_processor(lambda event, hint: None)
+                    try:
+                        return await handler(request)
+                    except RequestValidationError:
+                        raise HTTPException(422, "Invalid film import request. Title and an authorized source_url are required.") from None
+                    except HTTPException:
+                        raise
+                    except Exception:
+                        raise HTTPException(503, "Film import is unavailable. Upload a file or try again later.") from None
+            return await handler(request)
+
+        return sanitized_handler
+
+
+router = APIRouter(prefix="/teams/{team_id}/film", tags=["film"], route_class=FilmRoute)
 
 ALLOWED_FILM_TYPES = {"video/mp4": ".mp4", "video/quicktime": ".mov"}
 MAX_FILM_BYTES = 5 * 1024**3
@@ -95,6 +121,9 @@ def _refresh_processing(db: Session, uploads: list[GameUpload]) -> None:
     """Pick up finished worker jobs so the page sees them on its next poll."""
     service = FilmProcessingService(db)
     for upload in uploads:
+        if upload.status == "importing":
+            refresh_import(db, upload.id)
+            db.refresh(upload)
         if upload.status == "processing" and upload.processing_job_id:
             service.refresh(upload.id)
             db.refresh(upload)
@@ -125,6 +154,30 @@ def get_game_upload(
 ):
     upload = _get_upload(db, team_id, upload_id)
     _refresh_processing(db, [upload])
+    return upload
+
+
+@router.post("/import", response_model=GameUploadRead, status_code=status.HTTP_202_ACCEPTED)
+def import_film(
+    team_id: int,
+    payload: FilmImportStart,
+    db: Session = Depends(deps.get_db_session),
+    current_user=Depends(deps.get_current_user),
+    _membership=Depends(deps.require_team_membership),
+):
+    from datetime import datetime
+
+    check_import_available(payload.source_url.get_secret_value())
+    upload = GameUpload(
+        team_id=team_id, uploaded_by_id=current_user.id, title=payload.title,
+        notes=payload.notes, valley_jersey=payload.valley_jersey, opponent_jersey=payload.opponent_jersey,
+        storage_url=storage.to_storage_url(f"teams/{team_id}/film/{uuid4().hex}.mp4"),
+        status="importing", import_started_at=datetime.utcnow(),
+    )
+    db.add(upload)
+    db.commit()
+    db.refresh(upload)
+    launch_import(db, upload, payload.source_url.get_secret_value())
     return upload
 
 
@@ -305,7 +358,7 @@ def delete_game_film(
     upload = _get_upload(db, team_id, upload_id)
     service = FilmProcessingService(db)
     job_ids = dict.fromkeys(
-        job_id for job_id in (upload.processing_job_id, upload.detection_job_id, upload.events_job_id)
+        job_id for job_id in (upload.import_job_id, upload.processing_job_id, upload.detection_job_id, upload.events_job_id)
         if job_id
     )
     for job_id in job_ids:

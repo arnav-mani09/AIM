@@ -268,6 +268,9 @@ class FilmProcessingService:
         self.start(upload.id)
 
     def refresh_pending(self) -> None:
+        from app.services.film_import import refresh_pending_imports
+
+        refresh_pending_imports(self.db)
         pending = (
             self.db.query(GameUpload.id)
             .filter(GameUpload.status == "processing", GameUpload.processing_job_id.isnot(None))

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 
 class GameUploadRead(BaseModel):
@@ -30,6 +30,14 @@ class FilmUploadStart(BaseModel):
   content_type: str
   size_bytes: int = Field(gt=0)
   # Optional jersey colors ("white", "light blue", ...) so AIM knows which team is Valley.
+  valley_jersey: str | None = Field(default=None, max_length=40)
+  opponent_jersey: str | None = Field(default=None, max_length=40)
+
+
+class FilmImportStart(BaseModel):
+  title: str = Field(min_length=1, max_length=200)
+  source_url: SecretStr
+  notes: str | None = None
   valley_jersey: str | None = Field(default=None, max_length=40)
   opponent_jersey: str | None = Field(default=None, max_length=40)
 

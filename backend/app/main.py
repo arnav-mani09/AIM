@@ -10,6 +10,7 @@ from app.api.v1.routes import auth, stats, ingestion, teams, clips, film, games,
 from app.core.config import deployment_environment, get_settings
 from app.db.session import SessionLocal
 from app.services.film_processing import FilmProcessingService
+from app.services.film_import import filter_import_telemetry
 
 settings = get_settings()
 
@@ -23,6 +24,8 @@ if settings.sentry_dsn:
         # Keep request headers (login tokens) and IPs out of Sentry; deps.get_current_user
         # attaches the user's id instead.
         send_default_pii=False,
+        before_send=filter_import_telemetry,
+        before_send_transaction=filter_import_telemetry,
         traces_sample_rate=1.0 if ENVIRONMENT == "development" else 0.1,
         debug=os.environ.get("SENTRY_DEBUG") == "1",
     )
