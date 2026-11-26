@@ -12,7 +12,7 @@ import { useRouter } from "next/navigation";
 import { FilmShotChart } from "@/components/FilmShotChart";
 import { formatLocalDateTime } from "@/lib/dateTime";
 import type { TeamLine, TeamSide } from "@/lib/reviewApi";
-import { fetchSeason, pct, SeasonGame, SeasonSummary } from "@/lib/seasonApi";
+import { fetchSeason, pct, CategoryCoverageCounts, PlayCategory, SeasonGame, SeasonSummary } from "@/lib/seasonApi";
 
 const TEAMS: Array<[TeamSide, string]> = [
   ["valley", "Valley"],
@@ -22,6 +22,18 @@ const TEAMS: Array<[TeamSide, string]> = [
 const COMING_SOON = ["Assists", "Steals", "Player names"];
 
 const num = (x: number | null | undefined) => (x === null || x === undefined ? "-" : `${x}`);
+
+function categoryState(game: SeasonGame, category: PlayCategory) {
+  const value = game.box_score.valley[category === "rebounds" ? "reb" : "to"];
+  return game.play_coverage?.[category] ?? (value == null ? "unavailable" : "partial");
+}
+
+function coverageCounts(season: SeasonSummary, category: PlayCategory): CategoryCoverageCounts {
+  if (season.play_coverage) return season.play_coverage[category];
+  const counts = { complete: 0, partial: 0, unavailable: 0 };
+  for (const game of season.games) counts[categoryState(game, category)] += 1;
+  return counts;
+}
 
 export function SeasonView({ token, teamId }: { token: string; teamId: number }) {
   const router = useRouter();
@@ -119,18 +131,31 @@ export function SeasonView({ token, teamId }: { token: string; teamId: number })
 
 function SeasonTotals({ season }: { season: SeasonSummary }) {
   const games = season.games.length;
-  const playGames = season.plays_games ?? 0;
-  const perPlayGame = (x: number | null | undefined) =>
-    x === null || x === undefined || playGames === 0 ? "-" : (x / playGames).toFixed(1);
+  const rebounds = coverageCounts(season, "rebounds");
+  const turnovers = coverageCounts(season, "turnovers");
+  const perPlayGame = (value: number | null | undefined, counts: CategoryCoverageCounts) => {
+    const available = counts.complete + counts.partial;
+    return value == null || available === 0 ? "-" : (value / available).toFixed(1);
+  };
   return (
     <section className="section-card overflow-x-auto">
       <p className="dashboard-eyebrow">Team comparison</p>
       <h2 className="text-xl font-semibold text-ink">Season totals</h2>
       <p className="text-sm text-subtext">
-        {games} {games === 1 ? "game" : "games"} with film. Deleted shots don&apos;t count. Rebounds and turnovers are
-        team totals per game, rougher than the shooting
-        {playGames < games ? `, from ${playGames} of ${games} games (review the others to add them)` : ""}.
+        {games} {games === 1 ? "game" : "games"} with film. Deleted shots don&apos;t count. Rebound and turnover
+        averages use each category&apos;s covered games only, not necessarily the full season. Partial coverage
+        counts only observed, undeleted plays, including zero after deletion. Complete means extraction
+        finished, not that the counts are accurate.
       </p>
+      <ul className="mt-2 text-sm text-subtext" aria-label="Season play coverage">
+        {([["Rebounds", rebounds], ["Turnovers", turnovers]] as const).map(([label, counts]) => (
+          <li key={label}>
+            {label}: {counts.complete} complete, {counts.partial} partial, {counts.unavailable} unavailable.
+            {counts.partial > 0 ? " Observed counts include partial games." : ""}
+            {counts.unavailable > 0 ? " Limited cohort, not full-season totals." : ""}
+          </li>
+        ))}
+      </ul>
       <table aria-label="Season team totals" className="mt-4 w-full min-w-[48rem] text-left text-sm">
         <thead className="text-xs uppercase tracking-[0.14em] text-subtext">
           <tr>
@@ -143,10 +168,10 @@ function SeasonTotals({ season }: { season: SeasonSummary }) {
             <th>3PT%</th>
             <th>FT</th>
             <th>FT%</th>
-            <th>REB/g</th>
-            <th>OREB/g</th>
-            <th>DREB/g</th>
-            <th>TO/g</th>
+            <th>REB/covered game</th>
+            <th>OREB/covered game</th>
+            <th>DREB/covered game</th>
+            <th>TO/covered game</th>
           </tr>
         </thead>
         <tbody>
@@ -169,10 +194,10 @@ function SeasonTotals({ season }: { season: SeasonSummary }) {
                   {line.ftm}/{line.fta}
                 </td>
                 <td>{pct(line.ftm, line.fta)}</td>
-                <td>{perPlayGame(line.reb)}</td>
-                <td>{perPlayGame(line.oreb)}</td>
-                <td>{perPlayGame(line.dreb)}</td>
-                <td>{perPlayGame(line.to)}</td>
+                <td>{perPlayGame(line.reb, rebounds)}</td>
+                <td>{perPlayGame(line.oreb, rebounds)}</td>
+                <td>{perPlayGame(line.dreb, rebounds)}</td>
+                <td>{perPlayGame(line.to, turnovers)}</td>
               </tr>
             );
           })}
@@ -217,6 +242,14 @@ function GameRow({ game, reviewHref }: { game: SeasonGame; reviewHref: string })
           </span>
         </summary>
         <div className="mt-4 overflow-x-auto">
+          <p className="mb-2 text-xs text-subtext">
+            Rebounds: {categoryState(game, "rebounds")}. Turnovers: {categoryState(game, "turnovers")}.
+            {Object.values(game.play_coverage ?? {}).includes("partial") ||
+              categoryState(game, "rebounds") === "partial" || categoryState(game, "turnovers") === "partial"
+              ? " Partial counts are observed plays only; zero after deletion is not full-game completion."
+              : ""}
+            {" "}Complete describes extraction coverage, not accuracy.
+          </p>
           <BoxTable valley={valley} opponent={opponent} />
           <Link href={reviewHref} className="mt-3 inline-block text-xs font-semibold text-accent hover:underline">
             Review shots, rebounds and turnovers

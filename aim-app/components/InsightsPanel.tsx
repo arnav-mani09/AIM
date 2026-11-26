@@ -39,9 +39,9 @@ const TIPS = {
   efg: "Effective FG%: like FG%, but a made 3 counts as one and a half makes, because it's worth 1.5 times a 2. It shows how well a team shoots once 3s get their extra credit.",
   ts: "True shooting %: points per shot, with free throws counted in. It's on the same scale as FG%, so a higher number means more points from the same number of shots.",
   ftRate: "How many free throws a team shoots for every 10 field goal tries. Higher means they get fouled a lot.",
-  tov: "Turnover rate: turnovers out of every 100 possessions. Lower is better. Fair: AIM drafts turnovers from who has the ball, so treat it as close, not exact.",
-  oreb: "Offensive rebound rate: the share of the team's own misses it got back. Fair: drafted from film, close but not exact.",
-  dreb: "Defensive rebound rate: the share of the other team's misses this team grabbed. Fair: drafted from film, close but not exact.",
+  tov: "Turnover rate: turnovers out of every 100 estimated possessions. Lower is better. Requires matching completed extraction coverage; accuracy remains unverified.",
+  oreb: "Offensive rebound rate: the share of available rebounds the team got on offense. Requires completed rebound extraction coverage; accuracy remains unverified.",
+  dreb: "Defensive rebound rate: the share of available rebounds the team got on defense. Requires completed rebound extraction coverage; accuracy remains unverified.",
 };
 
 type Tile = { label: string; value: string; detail?: string; tip?: string; fair?: boolean };
@@ -66,12 +66,14 @@ export function StatTiles({ team, compact = false }: { team: TeamInsights; compa
     },
   ];
   if (team.play_games) {
-    const games = team.play_games < team.games ? ` (${team.play_games} of ${team.games} games)` : "";
+    const cohort = (games: number | undefined) => games === undefined ? "" : ` (${games} of ${team.games} games)`;
+    const reboundGames = cohort(team.rebound_games);
+    const turnoverGames = cohort(team.turnover_games);
     tiles.push(
-      { label: "Turnover rate", value: fmtPct(team.tov_pct), detail: `${team.to ?? "-"} turnovers${games}`, tip: TIPS.tov, fair: true },
-      { label: "Off. rebound rate", value: fmtPct(team.oreb_pct), detail: `${team.oreb ?? "-"} off. rebounds${games}`, tip: TIPS.oreb, fair: true },
-      { label: "Def. rebound rate", value: fmtPct(team.dreb_pct), detail: `${team.dreb ?? "-"} def. rebounds${games}`, tip: TIPS.dreb, fair: true },
-      { label: "Rebounds", value: `${team.reb ?? "-"}`, detail: games ? games.trim() : undefined, fair: true },
+      { label: "Turnover rate", value: fmtPct(team.tov_pct), detail: `${team.to ?? "-"} recorded turnovers${turnoverGames}`, tip: TIPS.tov, fair: true },
+      { label: "Off. rebound rate", value: fmtPct(team.oreb_pct), detail: `${team.oreb ?? "-"} recorded off. rebounds${reboundGames}`, tip: TIPS.oreb, fair: true },
+      { label: "Def. rebound rate", value: fmtPct(team.dreb_pct), detail: `${team.dreb ?? "-"} recorded def. rebounds${reboundGames}`, tip: TIPS.dreb, fair: true },
+      { label: "Rebounds", value: `${team.reb ?? "-"}`, detail: `Recorded events${reboundGames}; see coverage notes`, fair: true },
     );
   }
   return (

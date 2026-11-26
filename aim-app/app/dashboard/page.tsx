@@ -8,6 +8,7 @@ import {
   ClipRecord,
   GameRecord,
   GameUploadRecord,
+  canManageRoster,
   createGame,
   createInvite,
   createTeam,
@@ -29,7 +30,9 @@ import ChatPanel from "@/components/ChatPanel";
 import { SeasonView } from "@/components/SeasonView";
 import { ScoutingView } from "@/components/ScoutingView";
 import FilmLibrary from "@/components/FilmLibrary";
+import RosterPanel from "@/components/RosterPanel";
 import { validateFilmFile, validateFilmLink } from "@/lib/filmIntake";
+import { useFilmCapabilities } from "@/lib/useFilmCapabilities";
 
 const formatGigabytes = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 
@@ -93,7 +96,10 @@ function Dashboard() {
   const [filmError, setFilmError] = useState<string | null>(null);
   const [filmStatus, setFilmStatus] = useState<"idle" | "loading" | "error" | "success">("idle");
   const [filmFeedback, setFilmFeedback] = useState("");
-  const [uploadMethod, setUploadMethod] = useState<"link" | "file">("link");
+  const [uploadSelection, setUploadSelection] = useState<{ teamId: number | ""; method: "link" | "file" }>({ teamId: "", method: "file" });
+  const filmIntake = useFilmCapabilities(authToken, filmTeamId);
+  const linkImportEnabled = filmIntake.capabilities?.link_import_enabled === true;
+  const uploadMethod = uploadSelection.teamId === filmTeamId && uploadSelection.method === "link" && linkImportEnabled ? "link" : "file";
   const [filmRefreshTick, setFilmRefreshTick] = useState(0);
   const filmRequestVersion = useRef(0);
   const filmSubmitLock = useRef(false);
@@ -290,6 +296,11 @@ function Dashboard() {
       return;
     }
     if (uploadMethod === "link") {
+      if (!linkImportEnabled) {
+        setFilmStatus("error");
+        setFilmFeedback("Link import is not available. Upload a video file or retry the availability check.");
+        return;
+      }
       const sourceUrl = String(formData.get("source_url") ?? "").trim();
       const problem = validateFilmLink(sourceUrl);
       if (problem) {
@@ -478,17 +489,22 @@ function Dashboard() {
             </div>
             <div className="mt-5 grid gap-3 sm:grid-cols-2" role="group" aria-label="Choose how to add film">
               {(["link", "file"] as const).map((method) => (
-                <button key={method} type="button" aria-pressed={uploadMethod === method} disabled={filmStatus === "loading" || pendingFilm !== null} onClick={() => {
-                  setUploadMethod(method);
+                <button key={method} type="button" aria-pressed={uploadMethod === method} aria-describedby={method === "link" ? "film-import-availability" : undefined} disabled={filmStatus === "loading" || pendingFilm !== null || (method === "link" && !linkImportEnabled)} onClick={() => {
+                  setUploadSelection({ teamId: filmTeamId, method });
                   setFilmStatus("idle");
                   setFilmFeedback("");
                 }} className={`flex items-center gap-3 rounded-xl border p-4 text-left transition-colors disabled:opacity-60 ${uploadMethod === method ? "border-accent bg-tint ring-1 ring-accent" : "border-stroke bg-white hover:bg-slate-50"}`}>
                   <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="shrink-0 text-accent">
                     {method === "link" ? <><path d="m10 13 4-4M8 15l-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 3 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 1)" /></> : <><path d="M12 16V3m-5 5 5-5 5 5M4 15v5h16v-5" /></>}
                   </svg>
-                  <span><span className="block text-sm font-semibold text-ink">{method === "link" ? "Import from a link" : "Upload from your device"}</span><span className="mt-1 block text-xs leading-5 text-subtext">{method === "link" ? "Skip the download to your laptop" : "Resumable uploads for large game files"}</span></span>
+                  <span><span className="block text-sm font-semibold text-ink">{method === "link" ? "Import from a link" : "Upload from your device"}</span><span className="mt-1 block text-xs leading-5 text-subtext">{method === "link" ? (linkImportEnabled ? "Authorized direct video downloads" : "Available when link import is configured") : "Resumable uploads for large game files"}</span></span>
                 </button>
               ))}
+            </div>
+            <div id="film-import-availability" className="mt-3 text-xs leading-5 text-subtext" role="status">
+              {filmIntake.loading ? "Checking link-import availability…" : filmIntake.error ? (
+                <span>{filmIntake.error}{" "}<button type="button" onClick={filmIntake.retry} className="font-semibold underline">Retry check</button></span>
+              ) : filmIntake.capabilities ? filmIntake.capabilities.link_import_message : "Select a team to check link-import availability. File upload remains available."}
             </div>
             <form onSubmit={handleFilmUpload} className="mt-5 space-y-5" aria-busy={filmStatus === "loading"}>
               <fieldset disabled={filmStatus === "loading" || pendingFilm !== null} className="grid min-w-0 gap-4 md:grid-cols-2 disabled:opacity-70">
@@ -533,7 +549,7 @@ function Dashboard() {
                 <label className="flex min-w-0 flex-col gap-2 text-sm md:col-span-2">
                   Video download link
                   <input type="url" name="source_url" autoComplete="off" spellCheck={false} required placeholder="https://… / your authorized video download link" aria-describedby="film-link-help" className="w-full min-w-0 rounded-xl border border-stroke px-3 py-3 text-ink" />
-                  <span id="film-link-help" className="text-xs leading-5 text-subtext">Use an authorized direct video download link from a source enabled by your AIM administrator. A Hudl watch page or a link requiring sign-in will not work. Never paste a password.</span>
+                  <span id="film-link-help" className="text-xs leading-5 text-subtext">Paste an authorized direct video download link or the video link from a Hudl download-ready email. The source must be enabled by your AIM administrator. Hudl watch pages, stats links, and links requiring sign-in will not work. Never paste a password.</span>
                 </label>
               ) : (
                 <label className="flex min-w-0 flex-col gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm md:col-span-2">
@@ -881,6 +897,7 @@ function Dashboard() {
       )}
 
       {activeTab === "teams" && (
+        <>
         <section className="section-card space-y-6">
           <div>
             <h3 className="text-xl font-semibold text-ink">Team spaces</h3>
@@ -1045,6 +1062,24 @@ function Dashboard() {
             </form>
           </div>
         </section>
+        <section className="section-card space-y-5">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div><h3 className="text-xl font-semibold text-ink">Team roster</h3>
+              <p className="mt-1 text-sm text-subtext">Your players, in one place.</p>
+            </div>
+            <TeamPicker teams={teams} value={filmTeamId} onChange={setFilmTeamId} />
+          </div>
+          {teamsLoading ? <p className="text-sm text-subtext">Loading teams…</p> : teamsError ? (
+            <p role="alert" className="text-sm text-red-700">{teamsError}</p>
+          ) : authToken && teams.some((membership) => membership.team.id === filmTeamId) ? (
+            <>
+              <p className="text-sm font-semibold text-ink">{teams.find((membership) => membership.team.id === filmTeamId)?.team.name}</p>
+              <RosterPanel key={`${filmTeamId}:${authToken}`} token={authToken} teamId={Number(filmTeamId)}
+                canEdit={canManageRoster(teams.find((membership) => membership.team.id === filmTeamId))} />
+            </>
+          ) : <p className="text-sm text-subtext">Create or join a team to view its roster.</p>}
+        </section>
+        </>
       )}
 
     </main>

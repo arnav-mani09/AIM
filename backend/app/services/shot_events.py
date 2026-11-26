@@ -30,10 +30,35 @@ def is_play(e) -> bool:
     return _get(e, "type") in PLAY_TYPES
 
 
-def box_score(events, plays_known: bool = True) -> dict:
-    """Team totals from events that aren't deleted. Works on rows or dicts. Hidden types
-    (steals, assists) never count. plays_known=False (a film drafted before rebounds and
-    turnovers existed, not rerun yet) leaves those at None instead of a made-up 0."""
+def play_coverage(upload: GameUpload, events=()) -> dict[str, str]:
+    """Return unavailable, partial observations, or complete extraction per category.
+
+    Deleted rows still establish observed coverage. Legacy successful possession metadata
+    establishes complete coverage, but rows alone never establish a complete extraction.
+    Explicit metadata takes precedence over legacy metadata.
+    """
+    metadata = upload.events_info or {}
+    explicit = metadata.get("play_coverage")
+    possession = metadata.get("possession")
+    complete = isinstance(possession, dict) and bool(possession) and not possession.get("error")
+    coverage = {}
+    for category, kinds in (("rebounds", ("oreb", "dreb")), ("turnovers", ("to",))):
+        state = explicit.get(category, "unavailable") if isinstance(explicit, dict) else (
+            "complete" if complete else "unavailable")
+        if state not in ("unavailable", "partial", "complete"):
+            state = "unavailable"
+        if state == "unavailable" and any(_get(event, "type") in kinds for event in events):
+            state = "partial"
+        coverage[category] = state
+    return coverage
+
+
+def box_score(events, plays_known: bool | dict[str, str] = True) -> dict:
+    """Team totals from undeleted rows or dicts; hidden types never count.
+
+    Pass play_coverage(upload, events) to distinguish unavailable categories from observed
+    counts. Boolean arguments remain supported for legacy callers.
+    """
     out = {}
     for team in ("valley", "opponent"):
         mine = [e for e in events if _get(e, "team") == team and _get(e, "status") != "deleted"]
@@ -44,22 +69,20 @@ def box_score(events, plays_known: bool = True) -> dict:
         fgm, fg3m, ftm = (sum(1 for e in xs if _get(e, "made")) for xs in (fg, fg3, ft))
         line = {"fgm": fgm, "fga": len(fg), "fg3m": fg3m, "fg3a": len(fg3),
                 "ftm": ftm, "fta": len(ft), "pts": 2 * fgm + fg3m + ftm}
-        if plays_known:
-            n = {k: sum(1 for e in mine if _get(e, "type") == k) for k in PLAY_TYPES}
-            line.update(oreb=n["oreb"], dreb=n["dreb"], reb=n["oreb"] + n["dreb"], to=n["to"])
-        else:
-            line.update(oreb=None, dreb=None, reb=None, to=None)
+        coverage = plays_known if isinstance(plays_known, dict) else dict.fromkeys(
+            ("rebounds", "turnovers"), "complete" if plays_known else "unavailable")
+        n = {kind: sum(1 for event in mine if _get(event, "type") == kind) for kind in PLAY_TYPES}
+        rebounds = coverage.get("rebounds") in ("partial", "complete")
+        turnovers = coverage.get("turnovers") in ("partial", "complete")
+        line.update(oreb=n["oreb"] if rebounds else None, dreb=n["dreb"] if rebounds else None,
+                    reb=n["oreb"] + n["dreb"] if rebounds else None, to=n["to"] if turnovers else None)
         out[team] = line
     return out
 
 
 def has_plays(upload: GameUpload, events=()) -> bool:
-    """True when this film's rebounds and turnovers were drafted (the event step ran with them
-    and didn't fail on them), or a coach added one by hand."""
-    info = (upload.events_info or {}).get("possession")
-    if info and not info.get("error"):
-        return True
-    return any(is_play(e) for e in events)
+    """Legacy any-category availability flag, not evidence of complete coverage."""
+    return any(state != "unavailable" for state in play_coverage(upload, events).values())
 
 
 def review_status(upload: GameUpload) -> str:
@@ -97,6 +120,7 @@ def load_events(db: Session, upload: GameUpload, result: dict) -> int:
     new_shots = [e for e in new if e.get("type", SHOT) == SHOT]
     new_plays = [e for e in new if e.get("type", SHOT) in PLAY_TYPES + HIDDEN_TYPES]
     old_info = dict(upload.events_info or {})
+    old_coverage = play_coverage(upload, old)
     flip = bool(old_info.get("teams_swapped"))
     version = result.get("version")
     stored = 0
@@ -117,10 +141,12 @@ def load_events(db: Session, upload: GameUpload, result: dict) -> int:
         for k in ("teams_guessed", "teams_swapped", "valley_basket_first_half", "votes"):
             if k in old_info:
                 info[k] = old_info[k]
-    if keep_plays and old_info.get("possession"):
-        info["possession"] = old_info["possession"]
+    if keep_plays:
+        info["possession"] = old_info.get("possession")
+        info["play_coverage"] = old_coverage
     else:
         info["possession"] = result.get("possession")
+        info["play_coverage"] = play_coverage(GameUpload(events_info=result), new_plays)
     upload.events_info = info
     return stored
 
@@ -157,6 +183,8 @@ def swap_teams(db: Session, upload: GameUpload, user_id: int | None) -> None:
         if e.status == "draft" and e.type in VISIBLE_TYPES:  # the model's call was wrong, so it's a fix
             e.status = "fixed"
     info = dict(upload.events_info or {})
+    info["play_coverage"] = play_coverage(
+        upload, db.query(ShotEvent).filter(ShotEvent.upload_id == upload.id).all())
     info["teams_guessed"] = False
     info["teams_swapped"] = not info.get("teams_swapped", False)
     upload.events_info = info

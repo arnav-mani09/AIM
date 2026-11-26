@@ -194,12 +194,55 @@ class InsightsApiTest(unittest.TestCase):
         self.assertIn("Pace", body["coming_soon"])
         self.assertNotIn("Turnover rate", body["coming_soon"])
         self.assertEqual(body["quality"]["tov_pct"], "fair")
-        # Only game one has rebounds and turnovers: rates over that game alone.
         val = body["teams"]["valley"]
         self.assertEqual((val["play_games"], val["oreb"], val["to"]), (1, 1, 1))
-        self.assertEqual(val["oreb_pct"], 100.0)  # 1 / (1 + opponent's 0 dreb)
-        self.assertEqual(val["tov_pct"], round(100 * 1 / (1 + 0 - 1 + 1), 1))
-        self.assertIn("1 of 2 games", " ".join(val["lines"]))
+        self.assertIsNone(val["oreb_pct"])
+        self.assertIsNone(val["tov_pct"])
+        self.assertIn("0 complete, 1 partial, 1 unavailable games", " ".join(val["lines"]))
+
+    def test_complete_extraction_keeps_rates_and_empty_success_keeps_zeros(self):
+        db = self.Session()
+        for upload_id in (self.one, self.two):
+            upload = db.get(GameUpload, upload_id)
+            upload.events_info = {"possession": {"method": "v2"}}
+        db.commit()
+        db.close()
+        report = self.client.get(self.url).json()["teams"]["valley"]
+        self.assertEqual((report["play_games"], report["oreb"], report["to"]), (2, 1, 1))
+        self.assertEqual(report["oreb_pct"], 100.0)
+        self.assertEqual(report["tov_pct"], 100.0)
+        empty = self.client.get(self.url, params={"upload_ids": self.two}).json()["teams"]["valley"]
+        self.assertEqual((empty["oreb"], empty["dreb"], empty["reb"], empty["to"]), (0, 0, 0, 0))
+        self.assertIsNone(empty["tov_pct"])
+
+    def test_disjoint_complete_categories_do_not_create_a_turnover_rate(self):
+        db = self.Session()
+        db.get(GameUpload, self.one).events_info = {
+            "play_coverage": {"rebounds": "complete", "turnovers": "unavailable"}}
+        db.query(ShotEvent).filter(ShotEvent.upload_id == self.one, ShotEvent.type == "to").delete()
+        db.get(GameUpload, self.two).events_info = {
+            "play_coverage": {"rebounds": "unavailable", "turnovers": "complete"}}
+        db.commit()
+        db.close()
+        report = self.client.get(self.url).json()["teams"]["valley"]
+        self.assertEqual((report["oreb"], report["to"]), (1, 0))
+        self.assertEqual(report["oreb_pct"], 100.0)
+        self.assertIsNone(report["tov_pct"])
+
+    def test_partial_observations_do_not_inherit_complete_game_rates(self):
+        db = self.Session()
+        db.get(GameUpload, self.one).events_info = {"possession": {"method": "v2"}}
+        upload = db.get(GameUpload, self.two)
+        db.add(ShotEvent(upload_id=upload.id, type="to", t=20, team="valley", shot_type="none",
+                         made=False, confidence=1, status="deleted"))
+        db.commit()
+        db.close()
+        report = self.client.get(self.url).json()["teams"]["valley"]
+        self.assertEqual((report["rebound_games"], report["turnover_games"]), (1, 2))
+        self.assertEqual((report["reb"], report["to"]), (1, 1))
+        self.assertEqual(report["oreb_pct"], 100.0)
+        self.assertIsNone(report["tov_pct"])
+        self.assertIn("Turnovers: 1 complete, 1 partial", " ".join(report["lines"]))
 
     def test_one_game(self):
         body = self.client.get(self.url, params={"upload_ids": [self.two]}).json()

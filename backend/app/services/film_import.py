@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.game_upload import GameUpload
 from app.services import storage
-from app.services.film_import_download import MAX_BYTES, ImportRejected, validate_source_url
+from app.services.film_import_download import MAX_BYTES, ImportRejected, normalize_source_url
 
 IMPORT_DEADLINE = timedelta(hours=2, minutes=15)
 
@@ -19,14 +19,14 @@ def filter_import_telemetry(event, hint):
     return event
 
 
-def check_import_available(source_url: str) -> None:
+def check_import_available(source_url: str) -> str:
     settings = get_settings()
     if not settings.film_import_enabled or not settings.film_import_allowed_hosts.strip():
         raise HTTPException(503, "Direct-link film import is not enabled. Upload an MP4 or MOV file instead.")
     if not 1 <= len(source_url) <= 8192:
         raise HTTPException(400, "The direct download URL must be between 1 and 8192 characters.")
     try:
-        validate_source_url(source_url, settings.film_import_allowed_hosts)
+        return normalize_source_url(source_url, settings.film_import_allowed_hosts)
     except ImportRejected as exc:
         raise HTTPException(400, str(exc)) from None
 

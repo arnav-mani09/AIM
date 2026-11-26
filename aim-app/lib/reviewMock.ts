@@ -57,6 +57,7 @@ export async function mockFetchEvents(): Promise<ReviewData> {
     events: events.map((e) => ({ ...e })),
     plays: plays.map((p) => ({ ...p })),
     has_plays: true,
+    play_coverage: { rebounds: "complete", turnovers: "complete" },
     box_score: null,
   };
 }

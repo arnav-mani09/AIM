@@ -33,7 +33,9 @@ Facts you must keep straight:
 the time in the film, and sometimes the shooter's jersey number. A coach may have reviewed and fixed them.
 - Field goals (FG) include both 2s and 3s. Points = 2 per made 2, 3 per made 3, 1 per made free throw.
 - AIM also drafts team rebounds (offensive and defensive) and team turnovers, per team only, not per player \
-(get_box_score has them; null means that game hasn't had them drafted yet). It doesn't track assists, steals or fouls yet.
+(get_box_score has them; null means unavailable for that category). play_coverage distinguishes complete extraction \
+from partial observations: partial counts (including zero after deletion) are not full-game totals. \
+Never describe an unavailable category as zero or partial coverage as complete. It doesn't track assists, steals or fouls yet.
 
 Rules:
 - Use the tools to get every number. Never guess, estimate or round a stat, and never use outside knowledge about these teams or players.
@@ -151,7 +153,8 @@ def _box(db: Session, upload: GameUpload) -> dict:
     events = _live_events(db, upload.id)
     plays = (db.query(ShotEvent)
              .filter(ShotEvent.upload_id == upload.id, ShotEvent.type.in_(shot_events.PLAY_TYPES)).all())
-    team_plays = shot_events.box_score(plays, shot_events.has_plays(upload, plays))
+    coverage = shot_events.play_coverage(upload, plays)
+    team_plays = shot_events.box_score(plays, coverage)
     teams = {}
     for team in ("valley", "opponent"):
         mine = [e for e in events if e.team == team]
@@ -168,6 +171,7 @@ def _box(db: Session, upload: GameUpload) -> dict:
     return {
         "upload_id": upload.id, "title": upload.title,
         "shots_status": shot_events.review_status(upload),
+        "play_coverage": coverage,
         "shots": len(events),
         "reviewed_by_coach": sum(1 for e in events if e.status in ("confirmed", "fixed")),
         "valley": teams["valley"], "opponent": teams["opponent"],

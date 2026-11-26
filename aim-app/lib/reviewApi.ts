@@ -10,6 +10,8 @@ export type ShotType = "fg2" | "fg3" | "ft";
 export type EventStatus = "draft" | "confirmed" | "fixed" | "deleted";
 /** Team offensive rebound, defensive rebound, turnover. */
 export type PlayType = "oreb" | "dreb" | "to";
+export type CoverageState = "unavailable" | "partial" | "complete";
+export type PlayCoverage = { rebounds: CoverageState; turnovers: CoverageState };
 
 /** A team rebound or turnover AIM drafted (or the coach added). Not tied to a player yet. */
 export type PlayEvent = {
@@ -61,6 +63,7 @@ export type ReviewData = {
   plays?: PlayEvent[];
   /** False for a film drafted before AIM found rebounds and turnovers: rerun to add them. */
   has_plays?: boolean;
+  play_coverage?: PlayCoverage;
   box_score: { valley: TeamLine; opponent: TeamLine } | null;
   /** True when AIM had no jersey colors and guessed which team is Valley. */
   teams_guessed?: boolean;
@@ -194,7 +197,22 @@ export function swapReviewTeams(token: string, teamId: number, uploadId: number)
 
 /** Box score from the shots and plays on screen, so it updates the moment a coach fixes
  * something. Without plays (hasPlays false) rebounds and turnovers stay null, not 0. */
-export function boxScore(events: ShotEvent[], plays: PlayEvent[] = [], hasPlays = false): Record<TeamSide, TeamLine> {
+export function playCoverage(data: ReviewData | null | undefined, plays: PlayEvent[]): PlayCoverage {
+  const category = (name: keyof PlayCoverage, observed: boolean): CoverageState => {
+    const state = data?.play_coverage?.[name];
+    if (state === "complete" || state === "partial") return state;
+    return observed ? "partial" : "unavailable";
+  };
+  return {
+    rebounds: category("rebounds", plays.some((play) => play.type === "oreb" || play.type === "dreb")),
+    turnovers: category("turnovers", plays.some((play) => play.type === "to")),
+  };
+}
+
+export function boxScore(events: ShotEvent[], plays: PlayEvent[] = [], availability: boolean | PlayCoverage = false): Record<TeamSide, TeamLine> {
+  const coverage = typeof availability === "boolean"
+    ? { rebounds: availability, turnovers: availability }
+    : { rebounds: availability.rebounds !== "unavailable", turnovers: availability.turnovers !== "unavailable" };
   const empty = (): TeamLine => ({
     fgm: 0,
     fga: 0,
@@ -203,15 +221,16 @@ export function boxScore(events: ShotEvent[], plays: PlayEvent[] = [], hasPlays 
     ftm: 0,
     fta: 0,
     pts: 0,
-    oreb: hasPlays ? 0 : null,
-    dreb: hasPlays ? 0 : null,
-    reb: hasPlays ? 0 : null,
-    to: hasPlays ? 0 : null,
+    oreb: coverage.rebounds ? 0 : null,
+    dreb: coverage.rebounds ? 0 : null,
+    reb: coverage.rebounds ? 0 : null,
+    to: coverage.turnovers ? 0 : null,
   });
   const lines: Record<TeamSide, TeamLine> = { valley: empty(), opponent: empty() };
-  if (hasPlays) {
+  if (coverage.rebounds || coverage.turnovers) {
     for (const p of plays) {
       if (p.status === "deleted") continue;
+      if (p.type === "to" ? !coverage.turnovers : !coverage.rebounds) continue;
       const line = lines[p.team];
       line[p.type] = (line[p.type] ?? 0) + 1;
       if (p.type !== "to") line.reb = (line.reb ?? 0) + 1;

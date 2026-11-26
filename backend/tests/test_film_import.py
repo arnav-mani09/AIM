@@ -9,6 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from urllib.parse import urlencode
 
 os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["SENTRY_DSN"] = ""
@@ -24,6 +25,55 @@ from app.api import deps
 from app.api.v1.routes import film
 from app.models import Base, GameUpload, Team, TeamMembership, User
 from app.services import film_import, film_import_download as download
+
+
+class HudlDownloadLinkTest(unittest.TestCase):
+    wrapper = "https://www.hudl.com/notifications-tracking/tracker/BulkDownloadReady-example-123/email/landing"
+    target = "https://vtemp.hudl.com/example/game.mp4?v=PRIVATE%2Bsignature&other=1"
+
+    def wrap(self, target):
+        return self.wrapper + "?" + urlencode({"forward": target})
+
+    def test_unwraps_once_without_network_and_preserves_signed_target(self):
+        with patch("socket.getaddrinfo", side_effect=AssertionError("Network forbidden")):
+            self.assertEqual(download.normalize_source_url(self.wrap(self.target), "vtemp.hudl.com"), self.target)
+
+    def test_direct_download_remains_unchanged(self):
+        self.assertEqual(download.normalize_source_url(self.target, "vtemp.hudl.com"), self.target)
+
+    def test_target_requires_explicit_configured_host(self):
+        for hosts in ("", "www.hudl.com", "other.example"):
+            with self.subTest(hosts=hosts), self.assertRaises(download.ImportRejected):
+                download.normalize_source_url(self.wrap(self.target), hosts)
+
+    def test_rejects_stats_nested_and_unsafe_targets_without_echo(self):
+        targets = (
+            "/reports/teams/example/download/stats", "https://www.hudl.com/watch/example",
+            self.wrap(self.target), "http://vtemp.hudl.com/game.mp4",
+            "https://vtemp.hudl.com.evil.example/game.mp4", "https://127.0.0.1/game.mp4",
+            "https://user:PRIVATE@vtemp.hudl.com/game.mp4", "https://vtemp.hudl.com:444/game.mp4",
+            "https://vtemp.hudl.com/game.mp4#PRIVATE", "https://vtemp.hudl.com/game.m3u8",
+            "https://vtemp.hudl.com/game.mp4\n", "//vtemp.hudl.com/game.mp4", "",
+        )
+        for target in targets:
+            with self.subTest(target=target), self.assertRaises(download.ImportRejected) as rejected:
+                download.normalize_source_url(self.wrap(target), "vtemp.hudl.com,127.0.0.1")
+            self.assertNotIn("PRIVATE", str(rejected.exception))
+
+    def test_rejects_malformed_or_ambiguous_wrappers(self):
+        encoded = urlencode({"forward": self.target})
+        wrappers = (
+            self.wrapper, self.wrapper + "?forward", self.wrapper + "?" + encoded + "&" + encoded,
+            self.wrapper + "?" + encoded + "&extra=1", self.wrapper + "?" + encoded + "#fragment",
+            self.wrapper.replace("https:", "http:") + "?" + encoded,
+            self.wrapper.replace("www.hudl.com", "user@www.hudl.com") + "?" + encoded,
+            self.wrapper.replace("BulkDownloadReady", "OtherEvent") + "?" + encoded,
+            self.wrapper.replace("/email/landing", "/email/landing/extra") + "?" + encoded,
+            self.wrapper + "?" + urlencode({"forward": self.target, "other": "x", "extra": "y"}),
+        )
+        for wrapper in wrappers:
+            with self.subTest(wrapper=wrapper), self.assertRaises(download.ImportRejected):
+                download.normalize_source_url(wrapper, "vtemp.hudl.com")
 
 
 class DownloadSecurityTest(unittest.TestCase):
@@ -212,6 +262,26 @@ class ImportEndpointTest(unittest.TestCase):
         self.assertEqual(self.client.post(self.url, json=self.payload).status_code, 400)
         self.lookup.assert_not_called()
         self.assertEqual(self.db.query(GameUpload).count(), 0)
+
+    def test_hudl_wrapper_dispatches_only_normalized_private_target(self):
+        self.settings.film_import_allowed_hosts = "vtemp.hudl.com"
+        target = HudlDownloadLinkTest.target
+        self.payload["source_url"] = HudlDownloadLinkTest.wrapper + "?" + urlencode({"forward": target})
+        response = self.client.post(self.url, json=self.payload)
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(self.secret.call_args.args[0]["FILM_IMPORT_SOURCE_URL"], target)
+        self.assertNotIn("PRIVATE", response.text)
+        self.assertNotIn("PRIVATE", str(self.db.query(GameUpload).one().__dict__))
+        self.assertNotIn("PRIVATE", str(self.function.spawn.call_args))
+
+    def test_hudl_stats_link_is_rejected_before_row_or_dispatch(self):
+        self.settings.film_import_allowed_hosts = "vtemp.hudl.com"
+        self.payload["source_url"] = HudlDownloadLinkTest.wrapper + "?" + urlencode({"forward": "/reports/PRIVATE/stats"})
+        response = self.client.post(self.url, json=self.payload)
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("PRIVATE", response.text)
+        self.assertEqual(self.db.query(GameUpload).count(), 0)
+        self.lookup.assert_not_called()
 
     def test_direct_upload_remains_available_when_import_disabled(self):
         self.settings.film_import_enabled = False

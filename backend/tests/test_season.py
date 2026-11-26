@@ -137,6 +137,74 @@ class SeasonTest(unittest.TestCase):
         self.assertEqual((body["games"], body["shots"], body["pending"]), ([], [], 0))
         self.assertEqual(body["totals"]["valley"]["pts"], 0)
 
+    def reset_play_data(self):
+        db = self.Session()
+        db.query(ShotEvent).filter(ShotEvent.upload_id.in_((self.one_id, self.two_id)),
+                                   ShotEvent.type != "shot").delete(synchronize_session=False)
+        for upload_id in (self.one_id, self.two_id):
+            db.get(GameUpload, upload_id).events_info = {}
+        return db
+
+    def test_independent_category_totals_and_cohort_counts(self):
+        db = self.reset_play_data()
+        db.get(GameUpload, self.one_id).events_info = {
+            "play_coverage": {"rebounds": "complete", "turnovers": "unavailable"}}
+        db.add(ShotEvent(upload_id=self.two_id, type="to", t=30, team="valley", shot_type="none",
+                         made=False, confidence=1, status="fixed"))
+        db.commit()
+        db.close()
+        body = self.client.get(f"/api/v1/teams/{self.team_id}/season").json()
+        self.assertEqual(body["play_coverage"], {
+            "rebounds": {"complete": 1, "partial": 0, "unavailable": 1},
+            "turnovers": {"complete": 0, "partial": 1, "unavailable": 1},
+        })
+        self.assertEqual((body["totals"]["valley"]["reb"], body["totals"]["valley"]["to"]), (0, 1))
+        games = {game["upload_id"]: game for game in body["games"]}
+        self.assertIsNone(games[self.one_id]["box_score"]["valley"]["to"])
+        self.assertIsNone(games[self.two_id]["box_score"]["valley"]["reb"])
+        self.assertEqual(games[self.two_id]["play_coverage"], {"rebounds": "unavailable", "turnovers": "partial"})
+        self.assertEqual(body["totals"]["valley"]["pts"], 6)
+
+    def test_deleted_manual_rebound_keeps_observed_zero_not_unknown_turnovers(self):
+        db = self.reset_play_data()
+        db.add(ShotEvent(upload_id=self.one_id, type="oreb", t=30, team="valley", shot_type="none",
+                         made=False, confidence=1, status="deleted"))
+        db.commit()
+        db.close()
+        body = self.client.get(f"/api/v1/teams/{self.team_id}/season").json()
+        self.assertEqual(body["totals"]["valley"]["reb"], 0)
+        self.assertIsNone(body["totals"]["valley"]["to"])
+        self.assertIsNone(body["totals"]["opponent"]["to"])
+        self.assertEqual(body["play_coverage"]["rebounds"], {"complete": 0, "partial": 1, "unavailable": 1})
+        self.assertEqual(body["play_coverage"]["turnovers"], {"complete": 0, "partial": 0, "unavailable": 2})
+
+    def test_successful_empty_extraction_keeps_category_zeros(self):
+        db = self.reset_play_data()
+        db.get(GameUpload, self.one_id).events_info = {
+            "play_coverage": {"rebounds": "complete", "turnovers": "complete"}}
+        db.commit()
+        db.close()
+        body = self.client.get(f"/api/v1/teams/{self.team_id}/season").json()
+        self.assertEqual(body["plays_games"], 1)
+        for category in ("rebounds", "turnovers"):
+            self.assertEqual(body["play_coverage"][category], {"complete": 1, "partial": 0, "unavailable": 1})
+        for side in ("valley", "opponent"):
+            self.assertEqual([body["totals"][side][key] for key in ("oreb", "dreb", "reb", "to")], [0, 0, 0, 0])
+
+    def test_hidden_events_do_not_establish_category_coverage(self):
+        db = self.reset_play_data()
+        for kind in ("ast", "stl"):
+            db.add(ShotEvent(upload_id=self.one_id, type=kind, t=30, team="valley", shot_type="none",
+                             made=False, confidence=1, status="draft"))
+        db.commit()
+        db.close()
+        body = self.client.get(f"/api/v1/teams/{self.team_id}/season").json()
+        self.assertEqual(body["plays_games"], 0)
+        for category in ("rebounds", "turnovers"):
+            self.assertEqual(body["play_coverage"][category], {"complete": 0, "partial": 0, "unavailable": 2})
+        for side in ("valley", "opponent"):
+            self.assertTrue(all(body["totals"][side][key] is None for key in ("oreb", "dreb", "reb", "to")))
+
 
 if __name__ == "__main__":
     unittest.main()

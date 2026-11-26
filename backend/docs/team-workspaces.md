@@ -9,6 +9,19 @@
 
 Refer to `backend/app/api/v1/routes/teams.py` for implementation details.
 
+## Roster management
+
+Team membership responses include `can_manage_roster`, computed from the same
+owner/coach/admin policy that authorizes roster writes. Clients use it for roster
+controls; it does not grant invite-management or other unrelated permissions.
+
+- `GET /api/v1/teams/{teamId}/players` remains available to all team members and returns players sorted by name.
+- `POST /api/v1/teams/{teamId}/players` creates a player and returns `PlayerRead` (`id`, `name`, `jersey_number`, `team_id`) with status 201. An exact existing name/jersey pair returns the existing player, still with status 201; a jersey used by another player on that team returns 409.
+- `PATCH /api/v1/teams/{teamId}/players/{playerId}` requires both `{ name, jersey_number }` and returns the updated `PlayerRead` with status 200. A jersey collision with another player on that team returns 409; missing players or player IDs belonging to another team return 404.
+- Writes require team membership plus either the `coach`/`admin` membership role or ownership (`Team.created_by_id` matches the member's user ID). Other members and nonmembers receive 403 for writes. Owners created through the team API already receive coach membership.
+- Both write bodies trim surrounding whitespace before enforcing nonempty strings and maximum lengths (name 100, jersey 10); invalid bodies return 422. Jerseys remain strings, preserving leading zeroes, and are unique within a team for these sequential writes, not across teams. No database uniqueness constraint or schema migration is introduced, so concurrent conflicting writes are not database-enforced.
+- Editing updates the existing player ID in place, preserving possession links and history. There is no roster delete endpoint or automatic ML attribution.
+
 ## Frontend integration roadmap
 
 1. **Persist auth token** – continue storing the JWT from `/auth/login` so client-side requests to `/api/v1/teams` include the `Authorization` header (Next.js route handlers can proxy if we keep secrets server-side).

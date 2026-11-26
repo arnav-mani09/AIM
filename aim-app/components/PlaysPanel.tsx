@@ -6,7 +6,7 @@
 
 import { useState } from "react";
 
-import type { PlayEvent, PlayType, TeamSide } from "@/lib/reviewApi";
+import type { PlayCoverage, PlayEvent, PlayType, TeamSide } from "@/lib/reviewApi";
 
 const PLAY_LABEL: Record<PlayType, string> = { oreb: "Off. rebound", dreb: "Def. rebound", to: "Turnover" };
 const TEAM_LABEL: Record<TeamSide, string> = { valley: "Valley", opponent: "Opponent" };
@@ -23,6 +23,7 @@ function clock(seconds: number) {
 export function PlaysPanel({
   plays,
   hasPlays,
+  coverage,
   busy = false,
   onWatch,
   onSwitchTeam,
@@ -33,6 +34,7 @@ export function PlaysPanel({
 }: {
   plays: PlayEvent[];
   hasPlays: boolean;
+  coverage?: PlayCoverage;
   busy?: boolean;
   onWatch: (t: number) => void;
   onSwitchTeam: (play: PlayEvent) => void;
@@ -55,8 +57,8 @@ export function PlaysPanel({
         <div>
           <h2 className="text-xl font-semibold text-ink">Rebounds and turnovers</h2>
           <p className="text-sm text-subtext">
-            Team totals AIM drafted from who had the ball. Rough, so check the ones that look off. Switching a
-            rebound&apos;s team also switches offensive and defensive.
+            Automatic team-event estimates; corrections are optional. Switching a rebound&apos;s team also
+            switches offensive and defensive. Completed extraction does not verify accuracy.
           </p>
         </div>
         {hasPlays && (
@@ -82,6 +84,14 @@ export function PlaysPanel({
         )}
       </div>
 
+      {coverage && (coverage.rebounds !== "complete" || coverage.turnovers !== "complete") && hasPlays && (
+        <p className="rounded-xl bg-slate-50 p-3 text-sm text-subtext">
+          Rebounds: {coverage.rebounds === "partial" ? "observed events only" : coverage.rebounds === "complete" ? "extraction completed" : "unavailable, not zero"}.
+          {" "}Turnovers: {coverage.turnovers === "partial" ? "observed events only" : coverage.turnovers === "complete" ? "extraction completed" : "unavailable, not zero"}.
+          {" "}Partial counts are not full-game totals.
+        </p>
+      )}
+
       {!hasPlays ? (
         <div className="rounded-2xl border border-dashed border-stroke p-4 text-sm">
           <p className="text-ink">
@@ -93,7 +103,11 @@ export function PlaysPanel({
           </button>
         </div>
       ) : shown.length === 0 ? (
-        <p className="text-sm text-subtext">None in this list.</p>
+        <p className="text-sm text-subtext">
+          {kind === "to" && coverage?.turnovers === "unavailable" ? "Turnover events are unavailable, not zero."
+            : kind === "reb" && coverage?.rebounds === "unavailable" ? "Rebound events are unavailable, not zero."
+              : "No events in this list. Missing detections are still possible."}
+        </p>
       ) : (
         <ul className="flex max-h-[24rem] flex-col gap-2 overflow-y-auto pr-1">
           {shown.map((p) => {

@@ -12,6 +12,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.api import deps
+from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.game_upload import GameUpload
 from app.models.game import Game
@@ -19,6 +20,7 @@ from app.models.film_segment import FilmSegment
 from app.models.clip import Clip
 from app.schemas.game_upload import (
     FilmUploadStart,
+    FilmIntakeCapabilities,
     FilmImportStart,
     FilmUploadStarted,
     GameUploadRead,
@@ -129,6 +131,30 @@ def _refresh_processing(db: Session, uploads: list[GameUpload]) -> None:
             db.refresh(upload)
 
 
+@router.get("/capabilities", response_model=FilmIntakeCapabilities)
+def film_intake_capabilities(
+    team_id: int,
+    _membership=Depends(deps.require_team_membership),
+):
+    settings = get_settings()
+    if not settings.film_import_enabled:
+        import_status = "disabled"
+        message = "Link import is not enabled. You can still upload an MP4 or MOV from your device."
+    elif not settings.film_import_allowed_hosts.strip():
+        import_status = "unconfigured"
+        message = "Link import needs an enabled download provider. You can still upload a video file."
+    else:
+        import_status = "configured"
+        message = "Link import is configured for authorized direct downloads. Watch pages and sign-in links are not supported; the server validates each download."
+    return FilmIntakeCapabilities(
+        link_import_enabled=import_status == "configured",
+        link_import_status=import_status,
+        link_import_message=message,
+        max_size_bytes=MAX_FILM_BYTES,
+        content_types=sorted(ALLOWED_FILM_TYPES),
+    )
+
+
 @router.get("", response_model=list[GameUploadRead])
 def list_game_uploads(
     team_id: int,
@@ -167,7 +193,7 @@ def import_film(
 ):
     from datetime import datetime
 
-    check_import_available(payload.source_url.get_secret_value())
+    source_url = check_import_available(payload.source_url.get_secret_value())
     upload = GameUpload(
         team_id=team_id, uploaded_by_id=current_user.id, title=payload.title,
         notes=payload.notes, valley_jersey=payload.valley_jersey, opponent_jersey=payload.opponent_jersey,
@@ -177,7 +203,7 @@ def import_film(
     db.add(upload)
     db.commit()
     db.refresh(upload)
-    launch_import(db, upload, payload.source_url.get_secret_value())
+    launch_import(db, upload, source_url)
     return upload
 
 
@@ -501,13 +527,14 @@ def _events_response(db: Session, upload: GameUpload) -> ShotEventsRead:
         .order_by(ShotEvent.t.asc(), ShotEvent.id.asc())
         .all()
     )
-    plays_known = shot_events.has_plays(upload, events)
+    coverage = shot_events.play_coverage(upload, events)
     return ShotEventsRead(
         status=shot_events.review_status(upload),
         events=[e for e in events if e.type == shot_events.SHOT],
         plays=[e for e in events if shot_events.is_play(e)],
-        has_plays=plays_known,
-        box_score=shot_events.box_score(events, plays_known),
+        has_plays=shot_events.has_plays(upload, events),
+        play_coverage=coverage,
+        box_score=shot_events.box_score(events, coverage),
         teams_guessed=bool((upload.events_info or {}).get("teams_guessed")),
     )
 

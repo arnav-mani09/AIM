@@ -23,6 +23,8 @@ import {
   isUsingMock,
   patchReviewEvent,
   patchReviewPlay,
+  playCoverage,
+  PlayCoverage,
   PlayEvent,
   PlayPatch,
   PlayType,
@@ -186,8 +188,9 @@ export default function ReviewPage() {
 
   const selected = events.find((e) => e.id === selectedId) ?? null;
   const reviewed = events.filter((e) => e.status !== "draft").length;
-  const hasPlays = Boolean(data?.has_plays) || plays.length > 0;
-  const lines = useMemo(() => boxScore(events, plays, hasPlays), [events, plays, hasPlays]);
+  const coverage = useMemo(() => playCoverage(data, plays), [data, plays]);
+  const hasPlays = coverage.rebounds !== "unavailable" || coverage.turnovers !== "unavailable";
+  const lines = useMemo(() => boxScore(events, plays, coverage), [events, plays, coverage]);
 
   const playFrom = useCallback((t: number) => {
     const video = videoRef.current;
@@ -478,11 +481,12 @@ export default function ReviewPage() {
             <ProgressBar reviewed={reviewed} total={events.length} />
           </section>
 
-          <BoxScore valley={lines.valley} opponent={lines.opponent} />
+          <BoxScore valley={lines.valley} opponent={lines.opponent} coverage={coverage} />
 
           <PlaysPanel
             plays={plays}
             hasPlays={hasPlays}
+            coverage={coverage}
             busy={saving || data.status !== "ready"}
             onWatch={playFrom}
             onSwitchTeam={(p) => updatePlay(p, { team: p.team === "valley" ? "opponent" : "valley" })}
@@ -590,7 +594,7 @@ function ProgressBar({ reviewed, total }: { reviewed: number; total: number }) {
   );
 }
 
-function BoxScore({ valley, opponent }: { valley: TeamLine; opponent: TeamLine }) {
+function BoxScore({ valley, opponent, coverage }: { valley: TeamLine; opponent: TeamLine; coverage: PlayCoverage }) {
   const rows: Array<[string, TeamLine]> = [
     ["Valley", valley],
     ["Opponent", opponent],
@@ -602,6 +606,11 @@ function BoxScore({ valley, opponent }: { valley: TeamLine; opponent: TeamLine }
         Includes automatic drafts without requiring confirmation. Updates after corrections save; deleted events
         don&apos;t count. Estimates may miss or misclassify events. Rebounds and turnovers are team totals and
         rougher than the shooting. A dash means unavailable, not zero.
+      </p>
+      <p className="mt-2 text-xs text-subtext">
+        Rebounds: {coverage.rebounds === "complete" ? "extraction completed" : coverage.rebounds === "partial" ? "observed events only, not a full-game total" : "unavailable"}.
+        {" "}Turnovers: {coverage.turnovers === "complete" ? "extraction completed" : coverage.turnovers === "partial" ? "observed events only, not a full-game total" : "unavailable"}.
+        {" "}Completed extraction is not verified accuracy.
       </p>
       <table className="mt-4 w-full min-w-[40rem] text-left text-lg">
         <thead className="text-xs uppercase tracking-[0.14em] text-subtext">

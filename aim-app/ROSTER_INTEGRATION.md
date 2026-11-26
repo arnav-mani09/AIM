@@ -1,0 +1,8 @@
+# Roster integration
+
+- Film uploads do not require a roster. The existing breakdown shot form still requires a player for player-specific shots; this change does not change statistics or attribution semantics.
+- Breakdown and Team Spaces use the authenticated membership's `can_manage_roster` capability before showing roster writes. The backend computes this from the same owner/coach/admin policy used to authorize writes. Unknown, missing, or failed permission checks do not block existing statistics. No client-decoded JWT role is used.
+- Members see read-only roster guidance and a Team Spaces link, and can continue logging shots for existing players under existing backend permissions. Choose the relevant team in Team Spaces; the link does not preselect it.
+- Owners with an ordinary member role can manage their roster when the server returns the capability. Explicit server `false` takes precedence over role fallback. Older servers without the field retain conservative coach/admin-only UI access; they cannot establish owner access. The API still authorizes every write and does not expose owner IDs for this check.
+- Player saves use a synchronous in-flight lock, preserve entered fields and inline errors on failure, and replace matching IDs rather than appending duplicates when the backend returns an existing player. Team/token-keyed roster state and team/game-keyed breakdown state prevent old requests or drafts from appearing in a different team context.
+- Names and jersey numbers are roster metadata only. They do not identify players in video, validate automated player attribution, or establish individual-stat accuracy. No video-attribution accuracy claim is made.

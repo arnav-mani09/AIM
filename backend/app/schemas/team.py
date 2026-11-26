@@ -24,6 +24,7 @@ class TeamRead(TeamBase):
 class TeamMembershipRead(BaseModel):
     id: int
     role: str
+    can_manage_roster: bool = False
     joined_at: datetime
     team: TeamRead
 

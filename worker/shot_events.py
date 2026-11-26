@@ -123,7 +123,7 @@ def shot_type_confidence(s: dict) -> float | None:
     return round(sure, 2)
 
 
-def box_score(events: list[dict], plays_known: bool = True) -> dict:
+def box_score(events: list[dict], plays_known: bool | dict[str, str] = True) -> dict:
     """Team totals from events that aren't deleted or hidden. Same shape the API returns."""
     out = {}
     for team in ("valley", "opponent"):
@@ -139,8 +139,12 @@ def box_score(events: list[dict], plays_known: bool = True) -> dict:
                      "ftm": ftm, "fta": len(ft), "pts": 2 * fgm + fg3m + ftm,
                      "oreb": plays["oreb"], "dreb": plays["dreb"], "reb": plays["oreb"] + plays["dreb"],
                      "to": plays["to"]}
-        if not plays_known:
-            out[team].update(oreb=None, dreb=None, reb=None, to=None)
+        coverage = plays_known if isinstance(plays_known, dict) else dict.fromkeys(
+            ("rebounds", "turnovers"), "complete" if plays_known else "unavailable")
+        if coverage.get("rebounds") not in ("partial", "complete"):
+            out[team].update(oreb=None, dreb=None, reb=None)
+        if coverage.get("turnovers") not in ("partial", "complete"):
+            out[team]["to"] = None
     return out
 
 
@@ -210,6 +214,7 @@ def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: s
                                              "margin", "arc_source", "take", "court_x", "court_y", "zone")},
         })
     possession_info = None
+    play_coverage = {"rebounds": "unavailable", "turnovers": "unavailable"}
     if possession:
         try:
             import possession_events
@@ -217,6 +222,8 @@ def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: s
             got = possession_events.build_possession(doc, labeled, info, span, half_break, names, video)
             events += got["events"]
             possession_info = got["info"]
+            if not possession_info.get("error"):
+                play_coverage = {"rebounds": "complete", "turnovers": "complete"}
         except Exception as exc:  # rebounds and turnovers failing shouldn't lose the shots
             possession_info = {"error": f"{exc}"[:300]}
         events.sort(key=lambda e: e["t"])
@@ -230,8 +237,9 @@ def build_events(doc: dict, valley_jersey: str | None = None, opponent_jersey: s
         "dropped": {"warmup": info["warmup_dropped"], "dead_ball": info["dead_ball_dropped"]},
         "three_point": three_point,
         "possession": possession_info,
+        "play_coverage": play_coverage,
         "events": events,
-        "box_score": box_score(events, bool(possession_info) and not possession_info.get("error")),
+        "box_score": box_score(events, play_coverage),
     }
 
 

@@ -17,4 +17,12 @@ class TeamMembership(Base):
     team = relationship("Team", back_populates="memberships")
     user = relationship("User", back_populates="memberships")
 
+    @property
+    def can_manage_roster(self) -> bool:
+        return self.role in {"coach", "admin"} or (
+            self.team is not None
+            and self.team.created_by_id is not None
+            and self.team.created_by_id == self.user_id
+        )
+
     __table_args__ = (UniqueConstraint("team_id", "user_id", name="uq_team_membership_team_user"),)

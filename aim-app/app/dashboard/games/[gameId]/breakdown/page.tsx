@@ -10,6 +10,7 @@ import {
   PossessionRecord,
   ShotChartRecord,
   ShotZone,
+  canManageRoster,
   createPlayer,
   createPossession,
   deletePossession,
@@ -17,6 +18,7 @@ import {
   fetchPlayers,
   fetchPossessions,
   fetchShotChart,
+  fetchTeams,
   updatePossession,
   fetchFilmPlaybackUrl,
 } from "@/lib/teamApi";
@@ -50,10 +52,13 @@ const THREE_POINT_ZONES = new Set<ShotZone>([
 
 export default function GameBreakdownPage() {
   const params = useParams<Params>();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const teamId = searchParams.get("team");
-  const gameId = Number(params.gameId);
+  return <GameBreakdown key={`${teamId}:${params.gameId}`} teamId={teamId} gameId={Number(params.gameId)} />;
+}
+
+function GameBreakdown({ teamId, gameId }: { teamId: string | null; gameId: number }) {
+  const router = useRouter();
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const [token, setToken] = useState<string | null>(null);
@@ -76,6 +81,23 @@ export default function GameBreakdownPage() {
 
   const [newPlayerName, setNewPlayerName] = useState("");
   const [newPlayerJersey, setNewPlayerJersey] = useState("");
+  const [rosterAccess, setRosterAccess] = useState<"loading" | "manage" | "read-only" | "unavailable">("loading");
+  const [playerSaving, setPlayerSaving] = useState(false);
+  const [playerError, setPlayerError] = useState<string | null>(null);
+  const playerSaveLock = useRef(false);
+
+  useEffect(() => {
+    if (!token || !teamId) return;
+    let active = true;
+    fetchTeams(token)
+      .then((memberships) => {
+        if (!active) return;
+        const membership = memberships.find((entry) => entry.team.id === Number(teamId));
+        setRosterAccess(canManageRoster(membership) ? "manage" : "read-only");
+      })
+      .catch(() => { if (active) setRosterAccess("unavailable"); });
+    return () => { active = false; };
+  }, [token, teamId]);
 
   useEffect(() => {
     if (!teamId) {
@@ -171,18 +193,38 @@ export default function GameBreakdownPage() {
   };
 
   const handleAddPlayer = async () => {
-    if (!token || !teamId || !newPlayerName || !newPlayerJersey) return;
+    if (!token || !teamId || rosterAccess !== "manage" || playerSaveLock.current) return;
+    const payload = { name: newPlayerName.trim(), jersey_number: newPlayerJersey.trim() };
+    if (!payload.name || !payload.jersey_number) {
+      setPlayerError("Enter a player name and jersey number.");
+      return;
+    }
+    const existing = players.find((player) => player.jersey_number === payload.jersey_number);
+    if (existing) {
+      if (existing.name === payload.name) {
+        setSelectedPlayerId(existing.id);
+        setNewPlayerName("");
+        setNewPlayerJersey("");
+        setPlayerError(null);
+      } else {
+        setPlayerError("That jersey number is already on this roster. Edit the existing player in Team Spaces.");
+      }
+      return;
+    }
+    playerSaveLock.current = true;
+    setPlayerSaving(true);
+    setPlayerError(null);
     try {
-      const player = await createPlayer(token, Number(teamId), {
-        name: newPlayerName,
-        jersey_number: newPlayerJersey,
-      });
-      setPlayers((prev) => [...prev, player]);
+      const player = await createPlayer(token, Number(teamId), payload);
+      setPlayers((prev) => [...prev.filter((entry) => entry.id !== player.id), player]);
       setSelectedPlayerId(player.id);
       setNewPlayerName("");
       setNewPlayerJersey("");
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to add player");
+      setPlayerError(err instanceof Error ? err.message : "Failed to add player. Your entries are still here.");
+    } finally {
+      playerSaveLock.current = false;
+      setPlayerSaving(false);
     }
   };
 
@@ -397,10 +439,16 @@ export default function GameBreakdownPage() {
             </form>
 
             <div className="mt-6 rounded-2xl border border-dashed border-stroke p-4 text-sm">
-              <p className="text-xs uppercase tracking-[0.3em] text-subtext">Add player</p>
-              <div className="mt-3 flex flex-wrap gap-2">
+              <p className="text-xs uppercase tracking-[0.3em] text-subtext">Team roster</p>
+              <p className="mt-2 text-subtext">
+                Roster setup is optional for film uploads. Logging a player-specific shot here requires a roster player;
+                roster entries do not identify players in video or verify statistics.
+              </p>
+              {rosterAccess === "manage" ? <fieldset disabled={playerSaving} className="mt-3 flex flex-wrap gap-2">
                 <input
                   type="text"
+                  aria-label="Player name"
+                  maxLength={100}
                   value={newPlayerName}
                   onChange={(event) => setNewPlayerName(event.target.value)}
                   placeholder="Name"
@@ -408,6 +456,8 @@ export default function GameBreakdownPage() {
                 />
                 <input
                   type="text"
+                  aria-label="Jersey number"
+                  maxLength={10}
                   value={newPlayerJersey}
                   onChange={(event) => setNewPlayerJersey(event.target.value)}
                   placeholder="Jersey #"
@@ -418,9 +468,15 @@ export default function GameBreakdownPage() {
                   onClick={handleAddPlayer}
                   className="rounded-xl border border-stroke px-3 py-2 font-semibold text-ink hover:bg-tint"
                 >
-                  Add
+                  {playerSaving ? "Saving…" : "Add player"}
                 </button>
-              </div>
+              </fieldset> : <p className="mt-3 text-subtext" role="status">
+                {rosterAccess === "loading" ? "Checking roster permissions…" : rosterAccess === "unavailable"
+                  ? "Unable to verify roster permissions. You can still use existing players and statistics. Visit Team Spaces to check your membership."
+                  : "Roster is read-only here. You can log shots for existing players. Ask a team owner, coach, or admin to manage players in Team Spaces."}
+              </p>}
+              {playerError && <p role="alert" className="mt-2 text-red-700">{playerError}</p>}
+              <Link href="/dashboard?tab=teams" className="mt-3 inline-block underline">Manage roster in Team Spaces</Link>
             </div>
           </section>
 

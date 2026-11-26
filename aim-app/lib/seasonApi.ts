@@ -3,6 +3,11 @@
 
 import type { ShotEvent, TeamLine, TeamSide } from "./reviewApi";
 
+export type PlayCoverageState = "complete" | "partial" | "unavailable";
+export type PlayCategory = "rebounds" | "turnovers";
+export type PlayCoverage = Record<PlayCategory, PlayCoverageState>;
+export type CategoryCoverageCounts = Record<PlayCoverageState, number>;
+
 export type SeasonGame = {
   upload_id: number;
   title: string;
@@ -14,8 +19,8 @@ export type SeasonGame = {
   shots: number;
   /** Shots a coach has confirmed, fixed or deleted. */
   reviewed: number;
-  /** Team rebounds and turnovers were drafted for this film. */
   has_plays?: boolean;
+  play_coverage?: PlayCoverage;
   box_score: Record<TeamSide, TeamLine>;
 };
 
@@ -24,9 +29,9 @@ export type SeasonShot = ShotEvent & { upload_id: number };
 export type SeasonSummary = {
   /** Newest film first. */
   games: SeasonGame[];
-  /** Rebounds and turnovers add up over the plays_games films that have them. */
   totals: Record<TeamSide, TeamLine>;
   plays_games?: number;
+  play_coverage?: Record<PlayCategory, CategoryCoverageCounts>;
   /** Films still being processed, not counted yet. */
   pending: number;
   shots: SeasonShot[];

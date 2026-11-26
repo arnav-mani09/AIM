@@ -1,6 +1,15 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr
+
+
+class FilmIntakeCapabilities(BaseModel):
+  link_import_enabled: bool
+  link_import_status: Literal["configured", "disabled", "unconfigured"]
+  link_import_message: str
+  max_size_bytes: int
+  content_types: list[str]
 
 
 class GameUploadRead(BaseModel):

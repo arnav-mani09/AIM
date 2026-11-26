@@ -2,6 +2,15 @@
 
 ## API contract
 
+`GET /api/v1/teams/{team_id}/film/capabilities` requires team membership and
+returns the link-import configuration status (`disabled`, `unconfigured`, or
+`configured`), a safe explanation, maximum video size, and supported content
+types. It does not return provider hostnames, secrets, or source URLs. This is a
+read-only configuration check, not a live worker/storage/provider verification.
+The dashboard uses it to disable unavailable link import before coaches enter
+a URL; device upload remains selectable if the check fails or an older backend
+does not implement the endpoint.
+
 `POST /api/v1/teams/{team_id}/film/import` requires the existing bearer authentication
 and membership of that team. Request:
 
@@ -57,6 +66,17 @@ result collection on PostgreSQL; SQLite is for offline tests only.
 
 ## Security and capability limits
 
+- Hudl `BulkDownloadReady` email tracking links are accepted only for the exact
+  `www.hudl.com/notifications-tracking/tracker/BulkDownloadReady-…/email/landing`
+  route with a single `forward` parameter targeting an HTTPS MP4/MOV on
+  `vtemp.hudl.com`. The API unwraps locally without visiting the tracking page,
+  then applies the usual provider policy. Operators must explicitly allow
+  `vtemp.hudl.com`; this does not enable imports or broaden the configured hosts.
+  Only the normalized private download URL reaches the worker secret. Relative
+  stats/report links, duplicate parameters and arbitrary forwarded URLs are
+  rejected. Signed links may expire; no cookies or Hudl credentials are sent.
+  Forwarding an existing download-ready video link avoids transferring the film
+  through the coach's laptop, but does not eliminate provider export preparation.
 - Supply a download you are authorized to use. Ordinary Hudl watch/share pages,
   login pages, HLS/DASH playlists, cookies, interactive sign-in, and DRM are not
   supported. This is not a Hudl integration or authorization bypass. Ask the

@@ -442,10 +442,13 @@ class ShotEventsTest(unittest.TestCase):
         self.assertEqual(film["box_score"]["valley"]["to"], 0)
         self.assertEqual(season["totals"]["valley"]["to"], 0)
         self.assertEqual(scouting["teams"]["valley"]["to"], 0)
+        self.assertIsNone(scouting["teams"]["valley"]["reb"])
         self.assertEqual(scouting["teams"]["valley"]["play_games"], 1)
         db = self.Session()
         box = chat._box(db, db.get(GameUpload, self.upload_id))
         self.assertEqual(box["valley"]["to"], 0)
+        self.assertIsNone(box["valley"]["reb"])
+        self.assertEqual(box["play_coverage"], {"rebounds": "unavailable", "turnovers": "partial"})
         db.close()
 
     def test_pending_until_events_done(self):
@@ -454,6 +457,93 @@ class ShotEventsTest(unittest.TestCase):
         db.commit()
         db.close()
         self.assertEqual(self.client.get(self.base).json()["status"], "pending")
+
+    def test_manual_categories_remain_independent_through_deletion_rerun_and_swap(self):
+        for kind, category, other, total in (("oreb", "rebounds", "turnovers", "reb"),
+                                              ("to", "turnovers", "rebounds", "to")):
+            with self.subTest(kind=kind):
+                db = self.Session()
+                db.query(ShotEvent).filter(ShotEvent.upload_id == self.upload_id).delete()
+                upload = db.get(GameUpload, self.upload_id)
+                upload.events_info = {}
+                shot_events.load_events(db, upload, DRAFT)
+                db.commit()
+                db.close()
+                created = self.client.post(f"/api/v1/teams/{self.team_id}/film/{self.upload_id}/plays",
+                                           json={"t": 50, "type": kind, "team": "valley"}).json()
+                for deleted in (False, True):
+                    if deleted:
+                        self.client.patch(f"{self.base}/{created['id']}", json={"status": "deleted"})
+                    db = self.Session()
+                    upload = db.get(GameUpload, self.upload_id)
+                    for result in (DRAFT_PLAYS, {**DRAFT, "possession": {"error": "bad"}}, DRAFT):
+                        shot_events.load_events(db, upload, result)
+                        db.commit()
+                        rows = db.query(ShotEvent).filter(ShotEvent.upload_id == upload.id).all()
+                        coverage = shot_events.play_coverage(upload, rows)
+                        self.assertEqual(coverage, {category: "partial", other: "unavailable"})
+                        self.assertEqual(upload.events_info["play_coverage"], coverage)
+                        box = chat._box(db, upload)
+                        self.assertEqual(box["valley"][total], 0 if deleted else 1)
+                        unknown = "to" if other == "turnovers" else "reb"
+                        self.assertIsNone(box["valley"][unknown])
+                        self.assertEqual(box["play_coverage"], coverage)
+                    shot_events.swap_teams(db, upload, self.user_id)
+                    db.commit()
+                    self.assertEqual(chat._box(db, upload)["play_coverage"], coverage)
+                    self.assertEqual(chat._box(db, upload)["opponent"][total], 0 if deleted else 1)
+                    shot_events.swap_teams(db, upload, self.user_id)
+                    db.commit()
+                    db.close()
+                    report = self.client.get(f"/api/v1/teams/{self.team_id}/insights").json()["teams"]["valley"]
+                    self.assertEqual(report[total], 0 if deleted else 1)
+                    self.assertIsNone(report[unknown])
+                    for rate in ("tov_pct", "oreb_pct", "dreb_pct"):
+                        self.assertIsNone(report[rate])
+
+    def test_draft_replacement_updates_coverage_but_retained_complete_plays_do_not(self):
+        db = self.Session()
+        upload = db.get(GameUpload, self.upload_id)
+        for result, state in ((DRAFT_PLAYS, "complete"), (DRAFT, "unavailable"),
+                              ({**DRAFT, "possession": {"error": "bad"}}, "unavailable"),
+                              ({**DRAFT, "possession": {"method": "v2"}}, "complete")):
+            shot_events.load_events(db, upload, result)
+            db.commit()
+            rows = db.query(ShotEvent).filter(ShotEvent.upload_id == upload.id).all()
+            self.assertEqual(shot_events.play_coverage(upload, rows), dict.fromkeys(("rebounds", "turnovers"), state))
+        shot_events.load_events(db, upload, DRAFT_PLAYS)
+        db.commit()
+        event = db.query(ShotEvent).filter(ShotEvent.upload_id == upload.id, ShotEvent.type == "to").first()
+        shot_events.apply_patch(event, {"status": "deleted"}, self.user_id)
+        db.commit()
+        shot_events.load_events(db, upload, {**DRAFT, "possession": {"error": "failed rerun"}})
+        db.commit()
+        self.assertEqual(upload.events_info["play_coverage"], {"rebounds": "complete", "turnovers": "complete"})
+        self.assertEqual(upload.events_info["possession"], DRAFT_PLAYS["possession"])
+        db.close()
+
+    def test_explicit_metadata_overrides_legacy_and_hidden_rows_do_not_establish_coverage(self):
+        upload = GameUpload(events_info={"possession": {"method": "v2"},
+                                        "play_coverage": {"rebounds": "complete", "turnovers": "unavailable"}})
+        coverage = shot_events.play_coverage(upload, [play("ast", 5, "valley"), play("stl", 6, "opponent")])
+        self.assertEqual(coverage, {"rebounds": "complete", "turnovers": "unavailable"})
+        score = shot_events.box_score([], coverage)
+        self.assertEqual(score["valley"]["reb"], 0)
+        self.assertIsNone(score["valley"]["to"])
+
+    def test_film_route_exposes_independent_coverage_and_deleted_observations(self):
+        created = self.client.post(f"/api/v1/teams/{self.team_id}/film/{self.upload_id}/plays",
+                                   json={"t": 50, "type": "oreb", "team": "valley"}).json()
+        body = self.client.get(self.base).json()
+        self.assertEqual(body["play_coverage"], {"rebounds": "partial", "turnovers": "unavailable"})
+        self.assertTrue(body["has_plays"])
+        self.assertEqual(body["box_score"]["valley"]["reb"], 1)
+        self.assertIsNone(body["box_score"]["valley"]["to"])
+        self.client.patch(f"{self.base}/{created['id']}", json={"status": "deleted"})
+        body = self.client.get(self.base).json()
+        self.assertEqual(body["play_coverage"]["rebounds"], "partial")
+        self.assertEqual(body["box_score"]["valley"]["reb"], 0)
+        self.assertIsNone(body["box_score"]["opponent"]["to"])
 
 
 if __name__ == "__main__":

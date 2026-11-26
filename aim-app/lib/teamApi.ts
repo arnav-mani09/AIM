@@ -9,9 +9,17 @@ export type TeamSummary = {
 export type TeamMembership = {
   id: number;
   role: string;
+  can_manage_roster?: boolean;
   joined_at: string;
   team: TeamSummary;
 };
+
+export function canManageRoster(membership: Pick<TeamMembership, "role" | "can_manage_roster"> | null | undefined): boolean {
+  if (!membership) return false;
+  return typeof membership.can_manage_roster === "boolean"
+    ? membership.can_manage_roster
+    : ["coach", "admin"].includes(membership.role);
+}
 
 export type TeamInvite = {
   id: number;
@@ -108,6 +116,22 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
     throw new Error(message || "Request failed");
   }
   return response.json() as Promise<T>;
+}
+
+export type FilmIntakeCapabilities = {
+  link_import_enabled: boolean;
+  link_import_status: "configured" | "disabled" | "unconfigured";
+  link_import_message: string;
+  max_size_bytes: number;
+  content_types: string[];
+};
+
+export function fetchFilmIntakeCapabilities(
+  token: string,
+  teamId: number,
+  signal?: AbortSignal,
+): Promise<FilmIntakeCapabilities> {
+  return request<FilmIntakeCapabilities>(`/api/v1/teams/${teamId}/film/capabilities`, token, { signal, cache: "no-store" });
 }
 
 export function importGameFilm(
@@ -462,6 +486,18 @@ export function createPlayer(
 
 export function fetchGames(token: string, teamId: number): Promise<GameRecord[]> {
   return request<GameRecord[]>(`/api/v1/teams/${teamId}/games`, token);
+}
+
+export function updatePlayer(
+  token: string,
+  teamId: number,
+  playerId: number,
+  payload: { name: string; jersey_number: string }
+): Promise<PlayerRecord> {
+  return request<PlayerRecord>(`/api/v1/teams/${teamId}/players/${playerId}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function createGame(

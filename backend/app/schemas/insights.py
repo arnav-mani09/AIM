@@ -37,6 +37,8 @@ class TeamInsights(BaseModel):
     # Team rebounds and turnovers, over the films that have them (play_games); None without any.
     # Rated "fair" (see InsightsRead.quality).
     play_games: int = 0
+    rebound_games: int = 0
+    turnover_games: int = 0
     oreb: int | None = None
     dreb: int | None = None
     reb: int | None = None

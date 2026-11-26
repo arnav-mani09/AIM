@@ -1,8 +1,8 @@
 """Season view: every film whose shots are ready, with each game's box score, the season
 totals and all the shots for a season shot chart, in one call instead of one per film.
 
-Team rebounds and turnovers add up only over films that have them (films drafted before they
-existed show None until rerun); plays_games says how many films that is."""
+Team rebounds and turnovers add up independently over films with category coverage.
+Coverage describes extraction or observations, not accuracy."""
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -50,16 +50,23 @@ def read_season(
     totals = {team: {**dict.fromkeys(LINE_KEYS, 0), **dict.fromkeys(PLAY_KEYS)} for team in ("valley", "opponent")}
     games, shots = [], []
     plays_games = 0
+    category_counts = {
+        category: dict.fromkeys(("complete", "partial", "unavailable"), 0)
+        for category in ("rebounds", "turnovers")
+    }
     for u in ready:
         events = events_by_upload[u.id]
+        coverage = shot_events.play_coverage(u, events)
         plays_known = shot_events.has_plays(u, events)
         plays_games += plays_known
-        box = shot_events.box_score(events, plays_known)
+        for category, state in coverage.items():
+            category_counts[category][state] += 1
+        box = shot_events.box_score(events, coverage)
         for team, line in box.items():
             for k in LINE_KEYS:
                 totals[team][k] += line[k]
-            if plays_known:
-                for k in PLAY_KEYS:
+            for k in PLAY_KEYS:
+                if line[k] is not None:
                     totals[team][k] = (totals[team][k] or 0) + line[k]
         counted = [e for e in events if e.status != "deleted" and e.type == shot_events.SHOT]
         games.append(SeasonGame(
@@ -72,9 +79,13 @@ def read_season(
             shots=len(counted),
             reviewed=sum(1 for e in events if e.status != "draft" and e.type == shot_events.SHOT),
             has_plays=plays_known,
+            play_coverage=coverage,
             box_score=box,
         ))
         shots.extend(
             SeasonShot(**ShotEventRead.model_validate(e).model_dump(), upload_id=u.id) for e in counted
         )
-    return SeasonSummary(games=games, totals=totals, pending=pending, shots=shots, plays_games=plays_games)
+    return SeasonSummary(
+        games=games, totals=totals, pending=pending, shots=shots,
+        plays_games=plays_games, play_coverage=category_counts,
+    )

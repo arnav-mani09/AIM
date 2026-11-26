@@ -2,11 +2,12 @@
 
 import http.client
 import ipaddress
+import re
 import socket
 import ssl
 import time
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 MAX_BYTES = 5 * 1024**3
 PART_BYTES = 64 * 1024**2
@@ -41,6 +42,32 @@ def validate_source_url(source_url: str, allowed_hosts: str) -> tuple[str, str]:
         return host, parsed.path or "/"
     except (ValueError, UnicodeError):
         raise ImportRejected("Use an authorized HTTPS direct video download from an enabled provider.") from None
+
+
+def normalize_source_url(source_url: str, allowed_hosts: str) -> str:
+    try:
+        parsed = urlsplit(source_url)
+        if (parsed.hostname or "").lower() == "www.hudl.com":
+            validate_source_url(source_url, "www.hudl.com")
+            if not re.fullmatch(
+                r"/notifications-tracking/tracker/BulkDownloadReady-[A-Za-z0-9-]+/email/landing",
+                parsed.path,
+            ):
+                raise ValueError
+            parameters = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True, max_num_fields=2)
+            if len(parameters) != 1 or parameters[0][0] != "forward":
+                raise ValueError
+            source_url = parameters[0][1]
+            target = urlsplit(source_url)
+            if (target.hostname or "").lower() != "vtemp.hudl.com" or not target.path.lower().endswith((".mp4", ".mov")):
+                raise ValueError
+        validate_source_url(source_url, allowed_hosts)
+        return source_url
+    except (ValueError, UnicodeError):
+        raise ImportRejected(
+            "Use an authorized direct MP4/MOV download or a Hudl video download-email link from an enabled provider. "
+            "Hudl watch pages and stats links cannot import film."
+        ) from None
 
 
 def resolve_public(host: str) -> list[tuple]:

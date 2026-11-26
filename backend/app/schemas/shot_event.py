@@ -96,7 +96,6 @@ class TeamLine(BaseModel):
     ftm: int
     fta: int
     pts: int
-    # Team rebounds and turnovers. None for a film drafted before they existed (rerun to add them).
     oreb: int | None = None
     dreb: int | None = None
     reb: int | None = None
@@ -108,12 +107,17 @@ class BoxScore(BaseModel):
     opponent: TeamLine
 
 
+class PlayCoverage(BaseModel):
+    rebounds: Literal["unavailable", "partial", "complete"] = "unavailable"
+    turnovers: Literal["unavailable", "partial", "complete"] = "unavailable"
+
+
 class ShotEventsRead(BaseModel):
     status: Literal["pending", "ready", "failed"]
     events: list[ShotEventRead]  # shots only
     plays: list[PlayEventRead] = []  # team rebounds and turnovers
-    # False for a film drafted before rebounds and turnovers existed: rerun to add them.
     has_plays: bool = False
+    play_coverage: PlayCoverage = Field(default_factory=PlayCoverage)
     box_score: BoxScore
     # Extra to the review screen's contract: true when the jersey colors weren't given, so
     # Valley and Opponent may be swapped (POST .../events/swap-teams fixes it in one call).

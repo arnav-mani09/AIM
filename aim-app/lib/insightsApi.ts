@@ -42,6 +42,8 @@ export type TeamInsights = {
   small_sample: boolean;
   /** Films with team rebounds and turnovers; the fields below are null when 0. */
   play_games?: number;
+  rebound_games?: number;
+  turnover_games?: number;
   oreb?: number | null;
   dreb?: number | null;
   reb?: number | null;

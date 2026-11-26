@@ -4,6 +4,8 @@
 
 import sys
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -32,6 +34,15 @@ class ShotTypeConfidenceTest(unittest.TestCase):
 
 
 class BoxScoreTest(unittest.TestCase):
+    def test_independent_category_coverage(self):
+        events = [{"type": "oreb", "team": "valley"}, {"type": "to", "team": "opponent"}]
+        for category, unknown in (("rebounds", "to"), ("turnovers", "reb")):
+            with self.subTest(category=category):
+                coverage = {"rebounds": "unavailable", "turnovers": "unavailable", category: "partial"}
+                score = shot_events.box_score(events, coverage)
+                self.assertIsNone(score["valley"][unknown])
+                self.assertIsNone(score["opponent"][unknown])
+
     def test_threes_count_as_field_goals_and_score_three(self):
         events = [
             {"team": "valley", "shot_type": "fg3", "made": True},
@@ -43,6 +54,38 @@ class BoxScoreTest(unittest.TestCase):
         self.assertEqual(shot_events.box_score(events)["valley"],
                          {"fgm": 2, "fga": 3, "fg3m": 1, "fg3a": 2, "ftm": 1, "fta": 1, "pts": 6,
                           "oreb": 0, "dreb": 0, "reb": 0, "to": 0})
+
+
+class ExtractionCoverageTest(unittest.TestCase):
+    def build(self, enabled=True, error=None, info=None):
+        possession = SimpleNamespace(build_possession=lambda *args: {"events": [], "info": info or {}})
+        if error:
+            def fail(*args):
+                raise RuntimeError(error)
+            possession.build_possession = fail
+        split_info = {"votes": {"a": 1, "b": 0}, "valley_basket_first_half": "left",
+                      "warmup_dropped": 0, "dead_ball_dropped": 0}
+        with patch.object(shot_events.game_window, "find_window", return_value={"found": False}), \
+                patch.object(shot_events.shot_rules, "find_shots", return_value=[]), \
+                patch.object(shot_events.shot_split, "split", return_value=([], split_info)), \
+                patch.dict(sys.modules, {"possession_events": possession}):
+            return shot_events.build_events({"frames": [[10]]}, possession=enabled)
+
+    def test_success_empty_is_complete_even_without_info_fields(self):
+        result = self.build()
+        self.assertEqual(result["play_coverage"], {"rebounds": "complete", "turnovers": "complete"})
+        self.assertEqual(result["box_score"]["valley"]["reb"], 0)
+        self.assertEqual(result["box_score"]["opponent"]["to"], 0)
+
+    def test_skipped_and_failed_are_unavailable(self):
+        for result in (self.build(enabled=False), self.build(error="broken"), self.build(info={"error": "bad"})):
+            self.assertEqual(result["play_coverage"], {"rebounds": "unavailable", "turnovers": "unavailable"})
+            self.assertIsNone(result["box_score"]["valley"]["reb"])
+            self.assertIsNone(result["box_score"]["opponent"]["to"])
+
+    def test_tracker_fallback_is_successful_extraction(self):
+        result = self.build(info={"method": "v2", "film_read": False, "film_error": "no film"})
+        self.assertEqual(result["play_coverage"]["rebounds"], "complete")
 
 
 class CourtSpotTest(unittest.TestCase):
