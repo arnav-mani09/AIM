@@ -32,6 +32,12 @@ def check_import_available(source_url: str) -> str:
 
 
 def launch_import(db: Session, upload: GameUpload, source_url: str) -> None:
+    upload = db.query(GameUpload).filter(
+        GameUpload.id == upload.id,
+    ).populate_existing().with_for_update().first()
+    if not upload or upload.status != "importing" or upload.import_job_id:
+        db.rollback()
+        return
     settings = get_settings()
     try:
         function = modal.Function.from_name(settings.modal_film_app, "import_film")
@@ -57,7 +63,7 @@ def refresh_import(db: Session, upload_id: int) -> None:
 
     upload = db.query(GameUpload).filter(
         GameUpload.id == upload_id, GameUpload.status == "importing",
-    ).with_for_update(skip_locked=True).first()
+    ).populate_existing().with_for_update(skip_locked=True).first()
     if not upload:
         db.rollback()
         return

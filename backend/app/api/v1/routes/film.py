@@ -79,12 +79,14 @@ FILM_PART_BYTES = 64 * 1024**2
 MAX_PARTS = 10_000
 
 
-def _get_upload(db: Session, team_id: int, upload_id: int) -> GameUpload:
-    upload = (
+def _get_upload(db: Session, team_id: int, upload_id: int, *, for_update: bool = False) -> GameUpload:
+    query = (
         db.query(GameUpload)
         .filter(GameUpload.id == upload_id, GameUpload.team_id == team_id)
-        .first()
     )
+    if for_update:
+        query = query.populate_existing().with_for_update()
+    upload = query.first()
     if not upload:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found")
     return upload
@@ -297,19 +299,34 @@ def complete_film_upload(
     db: Session = Depends(deps.get_db_session),
     _membership=Depends(deps.require_team_membership),
 ):
-    upload, key = _get_upload_in_progress(db, team_id, upload_id)
+    upload = _get_upload(db, team_id, upload_id, for_update=True)
+    key = storage.key_from_storage_url(upload.storage_url)
+    if key and not upload.storage_upload_id and upload.status in {"processing", "ready", "error"}:
+        return upload
+    if not key or upload.status != "uploading" or not upload.storage_upload_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Upload is not in progress")
     try:
-        # Trust R2's record of the parts, not the browser's.
-        parts = storage.list_parts(key, upload.storage_upload_id)
-        expected_parts = math.ceil(upload.size_bytes / FILM_PART_BYTES)
-        received = sum(p["size"] for p in parts)
-        if len(parts) != expected_parts or received != upload.size_bytes:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Upload incomplete: {len(parts)} of {expected_parts} parts, {received} of {upload.size_bytes} bytes",
+        try:
+            parts = sorted(storage.list_parts(key, upload.storage_upload_id), key=lambda part: part["part_number"])
+            expected_parts = math.ceil(upload.size_bytes / FILM_PART_BYTES)
+            received = sum(part["size"] for part in parts)
+            valid_layout = len(parts) == expected_parts and all(
+                part["part_number"] == index + 1
+                and part["size"] == min(FILM_PART_BYTES, upload.size_bytes - index * FILM_PART_BYTES)
+                for index, part in enumerate(parts)
             )
-        storage.complete_multipart_upload(key, upload.storage_upload_id, parts)
-    except (BotoCoreError, ClientError) as exc:
+            if not valid_layout:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Upload incomplete or invalid: {len(parts)} of {expected_parts} parts, {received} of {upload.size_bytes} bytes",
+                )
+            storage.complete_multipart_upload(key, upload.storage_upload_id, parts)
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "NoSuchUpload":
+                raise
+            if storage.object_size(key) != upload.size_bytes:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The completed film size does not match this upload.") from None
+    except (BotoCoreError, ClientError, storage.StorageNotConfigured) as exc:
         raise _storage_error(exc) from exc
 
     upload.storage_upload_id = None

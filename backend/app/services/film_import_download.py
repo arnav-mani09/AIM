@@ -2,6 +2,7 @@
 
 import http.client
 import ipaddress
+import math
 import re
 import socket
 import ssl
@@ -111,6 +112,15 @@ class PinnedHTTPSConnection(http.client.HTTPSConnection):
             raise
 
 
+def _close_resources(*resources):
+    for resource in resources:
+        if resource is not None:
+            try:
+                resource.close()
+            except Exception:
+                pass
+
+
 def open_download(source_url: str, allowed_hosts: str):
     current = source_url
     for _ in range(6):
@@ -130,16 +140,13 @@ def open_download(source_url: str, allowed_hosts: str):
                 if not location:
                     raise ImportRejected("The provider returned an invalid redirect.")
                 current = urljoin(current, location)
-                response.close()
-                connection.close()
+                _close_resources(response, connection)
                 continue
             if response.status != 200:
                 raise ImportRejected("The direct download is unavailable or expired. Obtain a new authorized link.")
             return connection, response
         except BaseException:
-            if response:
-                response.close()
-            connection.close()
+            _close_resources(response, connection)
             raise
     raise ImportRejected("The download redirected too many times.")
 
@@ -150,8 +157,14 @@ def import_to_r2(source_url: str, allowed_hosts: str, client, bucket: str, key: 
     multipart_id = None
     completed = False
     started = time.monotonic()
+
+    def check_deadline():
+        if time.monotonic() - started >= MAX_SECONDS:
+            raise ImportRejected("The download exceeded the two-hour import limit.")
+
     try:
         connection, response = open_download(source_url, allowed_hosts)
+        check_deadline()
         content_type = (response.getheader("Content-Type") or "").split(";", 1)[0].strip().lower()
         if content_type not in VIDEO_TYPES or response.getheader("Content-Encoding", "identity").lower() != "identity":
             raise ImportRejected("The link must download an MP4 or MOV video, not a watch page.")
@@ -165,9 +178,9 @@ def import_to_r2(source_url: str, allowed_hosts: str, client, bucket: str, key: 
             while True:
                 part = bytearray()
                 while len(part) < PART_BYTES:
-                    if time.monotonic() - started > MAX_SECONDS:
-                        raise ImportRejected("The download exceeded the two-hour import limit.")
+                    check_deadline()
                     chunk = response.read(min(1024**2, PART_BYTES - len(part), MAX_BYTES - total + 1))
+                    check_deadline()
                     if not chunk:
                         break
                     total += len(chunk)
@@ -181,20 +194,22 @@ def import_to_r2(source_url: str, allowed_hosts: str, client, bucket: str, key: 
                 destination.write(part)
                 number = len(parts) + 1
                 uploaded = client.upload_part(Bucket=bucket, Key=key, UploadId=multipart_id, PartNumber=number, Body=bytes(part))
+                check_deadline()
                 parts.append({"PartNumber": number, "ETag": uploaded["ETag"]})
         if not total or (declared is not None and total != int(declared)):
             raise ImportRejected("The video download was empty or incomplete.")
         info = probe(local_path)
-        if not info.get("width") or not info.get("height") or info.get("duration", 0) <= 0:
+        check_deadline()
+        if not all(
+            type(info.get(field)) in (int, float) and math.isfinite(info[field]) and info[field] > 0
+            for field in ("width", "height", "duration")
+        ):
             raise ImportRejected("The download does not contain a playable video stream.")
         client.complete_multipart_upload(Bucket=bucket, Key=key, UploadId=multipart_id, MultipartUpload={"Parts": parts})
         completed = True
         return {"source_key": key, "size_bytes": total}
     finally:
-        if response:
-            response.close()
-        if connection:
-            connection.close()
+        _close_resources(response, connection)
         if multipart_id and not completed:
             try:
                 client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=multipart_id)

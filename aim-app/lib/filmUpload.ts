@@ -47,6 +47,7 @@ export async function uploadFilm(options: FilmUploadOptions): Promise<GameUpload
   const { token, teamId, file, signal } = options;
   let session = options.resume ?? null;
   try {
+    throwIfAborted(signal);
     if (!session) {
       const started = await startFilmUpload(token, teamId, {
         title: options.title,
@@ -65,11 +66,35 @@ export async function uploadFilm(options: FilmUploadOptions): Promise<GameUpload
       };
     }
     options.onSession?.(session);
+    throwIfAborted(signal);
 
     const active = session;
+    if (
+      !Number.isSafeInteger(active.partSize) ||
+      active.partSize <= 0 ||
+      !Number.isSafeInteger(active.partCount) ||
+      active.partCount <= 0 ||
+      active.partCount !== Math.ceil(file.size / active.partSize)
+    ) {
+      throw new Error("Upload session does not match this file.");
+    }
     const loaded = new Map<number, number>();
+    const confirmed = new Set<number>();
     const done = await listFilmUploadParts(token, teamId, active.uploadId);
-    for (const part of done) loaded.set(part.part_number, part.size);
+    throwIfAborted(signal);
+    for (const part of done) {
+      const partNumber = part.part_number;
+      const expectedSize = Math.min(active.partSize, file.size - (partNumber - 1) * active.partSize);
+      if (
+        Number.isInteger(partNumber) &&
+        partNumber >= 1 &&
+        partNumber <= active.partCount &&
+        part.size === expectedSize
+      ) {
+        loaded.set(partNumber, part.size);
+        confirmed.add(partNumber);
+      }
+    }
     const reportProgress = () => {
       let total = 0;
       loaded.forEach((bytes) => (total += bytes));
@@ -86,6 +111,7 @@ export async function uploadFilm(options: FilmUploadOptions): Promise<GameUpload
     const stop = new AbortController();
     const onOuterAbort = () => stop.abort();
     signal?.addEventListener("abort", onOuterAbort);
+    if (signal?.aborted) stop.abort();
     const worker = async () => {
       for (let n = remaining.shift(); n !== undefined && !stop.signal.aborted; n = remaining.shift()) {
         const partNumber = n;
@@ -98,26 +124,27 @@ export async function uploadFilm(options: FilmUploadOptions): Promise<GameUpload
             reportProgress();
           });
         });
+        confirmed.add(partNumber);
         loaded.set(partNumber, body.size);
         reportProgress();
       }
     };
+    let failure: { error: unknown } | undefined;
     try {
       await Promise.all(
         Array.from({ length: Math.min(CONCURRENT_PARTS, remaining.length) }, () =>
           worker().catch((error) => {
+            failure ??= { error };
             stop.abort();
-            throw error;
           })
         )
       );
     } finally {
       signal?.removeEventListener("abort", onOuterAbort);
     }
-    // Paused between parts: nothing threw, but some parts never went out.
-    let sent = 0;
-    loaded.forEach((bytes) => (sent += bytes));
-    if (sent < file.size) throw new Error("Upload paused.");
+    if (failure) throw failure.error;
+    throwIfAborted(signal);
+    if (confirmed.size !== active.partCount) throw new Error("Upload incomplete.");
 
     return await completeFilmUpload(token, teamId, active.uploadId);
   } catch (error) {
@@ -131,13 +158,28 @@ export async function uploadFilm(options: FilmUploadOptions): Promise<GameUpload
   }
 }
 
+function throwIfAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) throw new Error("Upload paused.");
+}
+
 async function withRetries(signal: AbortSignal | undefined, attempt: () => Promise<void>) {
   for (let i = 0; ; i += 1) {
+    throwIfAborted(signal);
     try {
       return await attempt();
     } catch (error) {
       if (signal?.aborted || i >= RETRY_DELAYS_MS.length) throw error;
-      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[i]));
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => {
+          clearTimeout(timer);
+          reject(new Error("Upload paused."));
+        };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", abort);
+          resolve();
+        }, RETRY_DELAYS_MS[i]);
+        signal?.addEventListener("abort", abort, { once: true });
+      });
     }
   }
 }
@@ -150,6 +192,7 @@ function putPart(
 ): Promise<void> {
   // XHR rather than fetch: fetch can't report upload progress.
   return new Promise((resolve, reject) => {
+    throwIfAborted(signal);
     const xhr = new XMLHttpRequest();
     const abort = () => xhr.abort();
     xhr.open("PUT", url);
@@ -163,7 +206,10 @@ function putPart(
       signal?.removeEventListener("abort", abort);
       reject(new Error("Network error while uploading"));
     };
-    xhr.onabort = () => reject(new Error("Upload paused."));
+    xhr.onabort = () => {
+      signal?.removeEventListener("abort", abort);
+      reject(new Error("Upload paused."));
+    };
     signal?.addEventListener("abort", abort);
     xhr.send(body);
   });

@@ -62,7 +62,12 @@ event pipeline without a browser. If the API restarts, the Modal import continue
 result collection resumes after restart. A crash between creating the row and
 saving its job ID is detected after 2h15m and produces an error; there is no
 automatic source replay or exactly-once dispatch guarantee. Row locking protects
-result collection on PostgreSQL; SQLite is for offline tests only.
+dispatch and result collection on PostgreSQL; both reload persisted state under
+the lock rather than trusting a session's cached job ID. Re-invoking dispatch for
+an already-dispatched or terminal row is a no-op, not a source replay. This does
+not deduplicate separate POSTs or close the spawn-before-commit crash window.
+SQLite is for offline tests only; real concurrent row locking remains a
+PostgreSQL release gate.
 
 ## Security and capability limits
 
@@ -96,19 +101,27 @@ result collection on PostgreSQL; SQLite is for offline tests only.
   supported `ftyp` ISO-BMFF/QuickTime brand. Older MOV files without `ftyp` or
   servers returning generic `application/octet-stream` are not supported by link
   import; use direct upload instead. A restricted local ffprobe validates a real
-  video stream and positive duration before publishing the R2 object.
+  video stream with finite, positive numeric dimensions and duration before
+  publishing the R2 object (NaN/infinite metadata is rejected).
 - Data streams to R2 in 64 MiB multipart parts (bounded buffer), with a temporary
   local copy of at most 5 GiB for validation. Budget that much ephemeral worker
   disk. Completed objects feed the existing processing pipeline. On normal
   failures the connection closes, incomplete multipart upload is aborted, and
   the temporary file is removed. Abort itself is best-effort if R2 is unavailable;
-  the lifecycle rule is the final safety net. Hard kills and the narrow dispatch
+  response/socket close failures do not prevent the abort attempt or mask the
+  original validation failure. The lifecycle rule is the final safety net.
+  Hard kills and the narrow dispatch
   crash window can leave unreferenced completed objects; reconcile orphaned
   objects operationally. Deleting an import cancels its Modal job best-effort and
   deletes its known object; incomplete parts still rely on lifecycle cleanup.
 - Socket inactivity is limited to 30 seconds, download time to two hours, and
   worker time to 2h5m; imports still pending at 2h15m become errors. A failed or
   expired source needs a new POST/new authorized link; no automatic retries.
+  The elapsed-time budget is checked after opening, each read, each part upload,
+  and probing, so an operation returning after the deadline cannot proceed to
+  object completion. These checks do not interrupt in-flight DNS, storage, or
+  probe operations, nor can they undo a completion already in flight; the worker
+  timeout and storage lifecycle remain required backstops.
 - **No source URL/token is stored in the database or returned by read APIs.**
   Only an R2 key, job ID and timestamps are persisted there. The source URL is
   supplied through a per-invocation private Modal Secret, not normal function
@@ -133,3 +146,8 @@ live migrations or deployments are necessary. They cover access control,
 disabled configuration, response secrecy, URL/DNS/redirect policy, numeric-IP
 TLS pinning, bounded multipart streaming, size/container/probe failures, abort
 cleanup, restart polling and processing handoff.
+Regressions also cover repeated dispatch, stale session job IDs, one-time result
+handoff, non-finite probe metadata, elapsed blocking operations, and cleanup when
+response/socket close raises. SQLite tests do not establish PostgreSQL concurrent
+dispatch/poll/delete behavior, Modal secret visibility or cancellation guarantees,
+or production R2 lifecycle behavior; those remain controlled release gates.

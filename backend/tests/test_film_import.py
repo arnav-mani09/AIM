@@ -124,6 +124,17 @@ class DownloadSecurityTest(unittest.TestCase):
             factory.return_value.connect.assert_called_once_with(("8.8.8.8", 443))
             context.wrap_socket.assert_called_once_with(factory.return_value, server_hostname="cdn.example")
 
+    def test_rejected_response_close_failure_still_closes_connection(self):
+        response = Mock(status=403)
+        response.close.side_effect = RuntimeError("response close failed")
+        connection = Mock()
+        connection.getresponse.return_value = response
+        public = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))]
+        with patch.object(download, "resolve_public", return_value=public), patch.object(download, "PinnedHTTPSConnection", return_value=connection):
+            with self.assertRaises(download.ImportRejected):
+                download.open_download("https://cdn.example/video", "cdn.example")
+        connection.close.assert_called_once()
+
 
 class MultipartImportTest(unittest.TestCase):
     def setUp(self):
@@ -140,9 +151,9 @@ class MultipartImportTest(unittest.TestCase):
         self.network.start()
         self.addCleanup(self.network.stop)
 
-    def run_import(self, data=None, content_type="video/mp4", length=None):
+    def run_import(self, data=None, content_type="video/mp4", length=None, response=None):
         data = self.video if data is None else data
-        response = io.BytesIO(data)
+        response = io.BytesIO(data) if response is None else response
         headers = {"Content-Type": content_type, "Content-Length": length}
         response.getheader = lambda name, default=None: headers.get(name, default)
         with patch.object(download, "open_download", return_value=(self.connection, response)):
@@ -201,6 +212,68 @@ class MultipartImportTest(unittest.TestCase):
             self.run_import()
         self.client.abort_multipart_upload.assert_called_once()
         self.client.complete_multipart_upload.assert_not_called()
+
+    def test_probe_requires_finite_positive_numeric_video_metadata(self):
+        for field in ("width", "height", "duration"):
+            for invalid in (0, -1, float("nan"), float("inf"), True, "30", None):
+                with self.subTest(field=field, invalid=invalid):
+                    self.probe.return_value = {"width": 1920, "height": 1080, "duration": 30, field: invalid}
+                    with self.assertRaises(download.ImportRejected):
+                        self.run_import()
+        self.assertEqual(self.client.abort_multipart_upload.call_count, 21)
+        self.client.complete_multipart_upload.assert_not_called()
+
+    def test_elapsed_open_read_upload_and_probe_cannot_publish(self):
+        for stage in ("open", "read", "upload", "probe"):
+            with self.subTest(stage=stage):
+                clock = [0]
+
+                def expire(*args, **kwargs):
+                    clock[0] = download.MAX_SECONDS
+
+                response = Mock(wraps=io.BytesIO(self.video))
+                body = io.BytesIO(self.video)
+                reads = [0]
+
+                def read(size):
+                    reads[0] += 1
+                    if reads[0] == 3:
+                        expire()
+                    return body.read(size)
+
+                self.client.reset_mock(side_effect=True)
+                self.client.create_multipart_upload.return_value = {"UploadId": "multipart"}
+                self.client.upload_part.return_value = {"ETag": "etag"}
+                self.probe.reset_mock(side_effect=True)
+                self.probe.return_value = {"width": 1920, "height": 1080, "duration": 30}
+                if stage == "open":
+                    clock[0] = download.MAX_SECONDS
+                elif stage == "read":
+                    response.read.side_effect = read
+                elif stage == "upload":
+                    self.client.upload_part.side_effect = lambda **kwargs: (expire(), {"ETag": "etag"})[1]
+                else:
+                    self.probe.side_effect = lambda path: (expire(), self.probe.return_value)[1]
+                with patch.object(download.time, "monotonic", side_effect=lambda: clock[0]) as monotonic:
+                    if stage == "open":
+                        monotonic.side_effect = [0, download.MAX_SECONDS]
+                    with self.assertRaisesRegex(download.ImportRejected, "two-hour import limit"):
+                        self.run_import(response=response)
+                self.client.complete_multipart_upload.assert_not_called()
+                if stage == "open":
+                    self.client.create_multipart_upload.assert_not_called()
+                else:
+                    self.client.abort_multipart_upload.assert_called_once()
+                response.close.assert_called_once()
+
+    def test_close_failure_does_not_prevent_abort_or_hide_rejection(self):
+        response = Mock(wraps=io.BytesIO(b"not video" * 10))
+        response.close.side_effect = RuntimeError("response close failed")
+        self.connection.close.side_effect = RuntimeError("connection close failed")
+        with self.assertRaises(download.ImportRejected):
+            self.run_import(response=response)
+        self.client.abort_multipart_upload.assert_called_once()
+        self.connection.close.assert_called_once()
 
 
 class ImportEndpointTest(unittest.TestCase):
@@ -343,6 +416,46 @@ class ImportEndpointTest(unittest.TestCase):
         self.assertEqual(upload.status, "processing")
         self.assertEqual(upload.size_bytes, 500)
         self.assertIsNone(upload.import_job_id)
+
+    def test_launch_does_not_replay_dispatched_or_terminal_import(self):
+        upload = self.create_upload()
+        film_import.launch_import(self.db, upload, self.payload["source_url"])
+        self.function.spawn.assert_called_once()
+        for status in ("processing", "ready", "error"):
+            upload.status = status
+            upload.import_job_id = None
+            self.db.commit()
+            film_import.launch_import(self.db, upload, self.payload["source_url"])
+        self.function.spawn.assert_called_once()
+
+    def test_launch_reloads_job_id_written_by_another_session(self):
+        upload = self.create_upload()
+        upload.import_job_id = None
+        self.db.commit()
+        upload_id = upload.id
+        with sessionmaker(bind=self.engine)() as other:
+            other.query(GameUpload).filter(GameUpload.id == upload_id).update({"import_job_id": "already-dispatched"})
+            other.commit()
+        self.assertIsNone(upload.import_job_id)
+        film_import.launch_import(self.db, upload, self.payload["source_url"])
+        self.function.spawn.assert_called_once()
+        self.assertEqual(upload.import_job_id, "already-dispatched")
+
+    def test_poll_reloads_job_id_and_hands_off_only_once(self):
+        upload = self.create_upload()
+        upload_id = upload.id
+        with sessionmaker(bind=self.engine)() as other:
+            other.query(GameUpload).filter(GameUpload.id == upload_id).update({"import_job_id": "persisted-call"})
+            other.commit()
+        self.assertEqual(upload.import_job_id, "import-call")
+        result = {"source_key": film.storage.key_from_storage_url(upload.storage_url), "size_bytes": 500}
+        with patch.object(film_import.modal.FunctionCall, "from_id") as call, patch.object(film.FilmProcessingService, "start") as start:
+            call.return_value.get.return_value = result
+            film_import.refresh_import(self.db, upload.id)
+            self.db.commit()
+            film_import.refresh_import(self.db, upload.id)
+            call.assert_called_once_with("persisted-call")
+            start.assert_called_once_with(upload.id)
 
     def test_get_poll_keeps_pending_import_and_reports_failures_safely(self):
         upload = self.create_upload()
